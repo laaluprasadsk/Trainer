@@ -254,16 +254,18 @@ export default function TrainersDiscoveryPage() {
                         >
                           {t.firstName} {t.lastName}
                         </Link>
-                        <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" title="Verified Certification" />
-                      </div>
-                      <div className="flex items-center gap-1 text-xs text-gray-500 mt-1">
-                        <MapPin className="w-3.5 h-3.5 text-gray-400" />
-                        <span>{t.homeLocationName}</span>
-                        <span className="font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded ml-1">
-                          {t.distance_km} km away
-                        </span>
-                      </div>
+                       <span title="Verified Certification">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                      </span>
                     </div>
+                    <div className="flex items-center gap-1 text-xs text-gray-500 mt-1">
+                      <MapPin className="w-3.5 h-3.5 text-gray-400" />
+                      <span>{t.homeLocationName}</span>
+                      <span className="font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded ml-1">
+                        {t.distance_km} km away
+                      </span>
+                    </div>
+                  </div>
 
                     {/* Rating Badge */}
                     <div className="flex items-center gap-1 bg-amber-50 border border-amber-200/80 px-2 py-1 rounded-lg shrink-0">
