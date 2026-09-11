@@ -56,10 +56,13 @@ enum PaymentStatus {
   HELD_IN_ESCROW
   TRANSFERRED
   REFUNDED
+  REFUND_PENDING
   FAILED
 }
 
 model User {
+  emailVerifiedAt DateTime? @map("email_verified_at")
+  phoneVerifiedAt DateTime? @map("phone_verified_at")
   id           String        @id @default(uuid())
   email        String        @unique
   phoneNumber  String        @unique @map("phone_number")
@@ -69,6 +72,10 @@ model User {
   createdAt    DateTime      @default(now()) @map("created_at")
   updatedAt    DateTime      @updatedAt @map("updated_at")
 
+  sessions       Session[]
+  tokens         AuthToken[]
+  notifications  Notification[]
+  uploads        Upload[]
   clientProfile  ClientProfile?
   trainerProfile TrainerProfile?
 
@@ -76,47 +83,51 @@ model User {
 }
 
 model ClientProfile {
-  id                  String      @id @default(uuid())
-  userId              String      @unique @map("user_id")
-  firstName           String      @map("first_name")
-  lastName            String      @map("last_name")
-  avatarUrl           String?     @map("avatar_url")
-  fitnessGoals        String[]    @map("fitness_goals")
-  defaultLocationName String?     @map("default_location_name")
-  createdAt           DateTime    @default(now()) @map("created_at")
+  id                  String   @id @default(uuid())
+  userId              String   @unique @map("user_id")
+  firstName           String   @map("first_name")
+  lastName            String   @map("last_name")
+  avatarUrl           String?  @map("avatar_url")
+  fitnessGoals        String[] @map("fitness_goals")
+  defaultLocationName String?  @map("default_location_name")
+  createdAt           DateTime @default(now()) @map("created_at")
 
-  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
-  bookings   Booking[]
-  reviews    Review[]
-  parqWaiver ParqWaiver?
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bookings     Booking[]
+  reviews      Review[]
+  parqWaiver   ParqWaiver?
+  trainerNotes ClientNote[]
 
   @@map("client_profiles")
 }
 
 model TrainerProfile {
-  id                 String             @id @default(uuid())
-  userId             String             @unique @map("user_id")
-  firstName          String             @map("first_name")
-  lastName           String             @map("last_name")
-  slug               String             @unique
-  bio                String?
-  yearsExperience    Int                @default(0) @map("years_experience")
-  specializations    String[]
-  hourlyRate         Decimal            @db.Decimal(10, 2) @map("hourly_rate")
-  currency           String             @default("INR")
-  verificationStatus VerificationStatus @default(UNVERIFIED) @map("verification_status")
-  homeLocationName   String             @map("home_location_name")
-  serviceRadiusKm    Decimal            @default(10.0) @db.Decimal(5, 2) @map("service_radius_km")
-  ratingAvg          Decimal            @default(0.00) @db.Decimal(3, 2) @map("rating_avg")
-  ratingCount        Int                @default(0) @map("rating_count")
-  stripeAccountId    String?            @map("stripe_account_id")
-  createdAt          DateTime           @default(now()) @map("created_at")
+  id                   String                @id @default(uuid())
+  userId               String                @unique @map("user_id")
+  firstName            String                @map("first_name")
+  lastName             String                @map("last_name")
+  avatarUrl            String?               @map("avatar_url")
+  slug                 String                @unique
+  bio                  String?
+  yearsExperience      Int                   @default(0) @map("years_experience")
+  specializations      String[]
+  acceptedSessionModes SessionLocationType[] @default([]) @map("accepted_session_modes")
+  hourlyRate           Decimal               @map("hourly_rate") @db.Decimal(10, 2)
+  currency             String                @default("INR")
+  verificationStatus   VerificationStatus    @default(UNVERIFIED) @map("verification_status")
+  homeLocationName     String                @map("home_location_name")
+  serviceRadiusKm      Decimal               @default(10.0) @map("service_radius_km") @db.Decimal(5, 2)
+  ratingAvg            Decimal               @default(0.00) @map("rating_avg") @db.Decimal(3, 2)
+  ratingCount          Int                   @default(0) @map("rating_count")
+  stripeAccountId      String?               @map("stripe_account_id")
+  createdAt            DateTime              @default(now()) @map("created_at")
 
   user              User               @relation(fields: [userId], references: [id], onDelete: Cascade)
   certifications    Certification[]
   availabilitySlots AvailabilitySlot[]
   bookings          Booking[]
   reviews           Review[]
+  clientNotes       ClientNote[]
 
   @@map("trainer_profiles")
 }
@@ -132,24 +143,26 @@ model Certification {
   issuedDate          DateTime?          @map("issued_date")
   expiryDate          DateTime?          @map("expiry_date")
   verifiedAt          DateTime?          @map("verified_at")
+  adminReviewNote     String?            @map("admin_review_note")
   createdAt           DateTime           @default(now()) @map("created_at")
 
   trainer TrainerProfile @relation(fields: [trainerId], references: [id], onDelete: Cascade)
 
+  @@index([trainerId])
   @@map("certifications")
 }
 
 model AvailabilitySlot {
   id        String     @id @default(uuid())
   trainerId String     @map("trainer_id")
-  slotDate  DateTime   @db.Date @map("slot_date")
+  slotDate  DateTime   @map("slot_date") @db.Date
   startTime String     @map("start_time")
   endTime   String     @map("end_time")
   status    SlotStatus @default(AVAILABLE)
   createdAt DateTime   @default(now()) @map("created_at")
 
-  trainer TrainerProfile @relation(fields: [trainerId], references: [id], onDelete: Cascade)
-  booking Booking?
+  trainer  TrainerProfile @relation(fields: [trainerId], references: [id], onDelete: Cascade)
+  bookings Booking[]
 
   @@unique([trainerId, slotDate, startTime])
   @@index([trainerId, slotDate, status])
@@ -157,20 +170,25 @@ model AvailabilitySlot {
 }
 
 model Booking {
-  id            String              @id @default(uuid())
-  clientId      String              @map("client_id")
-  trainerId     String              @map("trainer_id")
-  slotId        String              @unique @map("slot_id")
-  status        BookingStatus       @default(PENDING_PAYMENT)
-  locationType  SessionLocationType @map("location_type")
-  addressText   String?             @map("address_text")
-  totalAmount   Decimal             @db.Decimal(10, 2) @map("total_amount")
-  platformFee   Decimal             @db.Decimal(10, 2) @map("platform_fee")
-  trainerPayout Decimal             @db.Decimal(10, 2) @map("trainer_payout")
-  currency      String              @default("INR")
-  sessionOtp    String?             @map("session_otp")
-  createdAt     DateTime            @default(now()) @map("created_at")
-  updatedAt     DateTime            @updatedAt @map("updated_at")
+  id                  String              @id @default(uuid())
+  clientId            String              @map("client_id")
+  trainerId           String              @map("trainer_id")
+  slotId              String              @map("slot_id")
+  status              BookingStatus       @default(PENDING_PAYMENT)
+  locationType        SessionLocationType @map("location_type")
+  addressText         String?             @map("address_text")
+  totalAmount         Decimal             @map("total_amount") @db.Decimal(10, 2)
+  platformFee         Decimal             @map("platform_fee") @db.Decimal(10, 2)
+  trainerPayout       Decimal             @map("trainer_payout") @db.Decimal(10, 2)
+  currency            String              @default("INR")
+  expiresAt           DateTime?           @map("expires_at")
+  sessionOtp          String?             @map("session_otp")
+  createdAt           DateTime            @default(now()) @map("created_at")
+  updatedAt           DateTime            @updatedAt @map("updated_at")
+  proposedDate        DateTime?           @map("proposed_date") @db.Date
+  proposedStartTime   String?             @map("proposed_start_time")
+  proposedEndTime     String?             @map("proposed_end_time")
+  trainerResponseNote String?             @map("trainer_response_note")
 
   client  ClientProfile    @relation(fields: [clientId], references: [id])
   trainer TrainerProfile   @relation(fields: [trainerId], references: [id])
@@ -186,9 +204,9 @@ model Payment {
   bookingId        String        @unique @map("booking_id")
   gatewayOrderId   String        @unique @map("gateway_order_id")
   gatewayPaymentId String?       @unique @map("gateway_payment_id")
-  grossAmount      Decimal       @db.Decimal(10, 2) @map("gross_amount")
-  platformFee      Decimal       @db.Decimal(10, 2) @map("platform_fee")
-  trainerAmount    Decimal       @db.Decimal(10, 2) @map("trainer_amount")
+  grossAmount      Decimal       @map("gross_amount") @db.Decimal(10, 2)
+  platformFee      Decimal       @map("platform_fee") @db.Decimal(10, 2)
+  trainerAmount    Decimal       @map("trainer_amount") @db.Decimal(10, 2)
   status           PaymentStatus @default(REQUIRES_ACTION)
   createdAt        DateTime      @default(now()) @map("created_at")
 
@@ -210,6 +228,8 @@ model Review {
   client  ClientProfile  @relation(fields: [clientId], references: [id])
   trainer TrainerProfile @relation(fields: [trainerId], references: [id])
 
+  @@index([clientId])
+  @@index([trainerId])
   @@map("reviews")
 }
 
@@ -229,4 +249,128 @@ model ParqWaiver {
   client ClientProfile @relation(fields: [clientId], references: [id], onDelete: Cascade)
 
   @@map("parq_waivers")
+}
+
+model ClientNote {
+  id            String   @id @default(uuid())
+  trainerId     String   @map("trainer_id")
+  clientId      String   @map("client_id")
+  content       String   @default("")
+  targetWeights String?  @map("target_weights")
+  injuryNotes   String?  @map("injury_notes")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  trainer TrainerProfile @relation(fields: [trainerId], references: [id], onDelete: Cascade)
+  client  ClientProfile  @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@unique([trainerId, clientId])
+  @@index([clientId])
+  @@index([trainerId, updatedAt])
+  @@map("client_notes")
+}
+
+model Session {
+  id        String   @id
+  userId    String   @map("user_id")
+  expiresAt DateTime @map("expires_at")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([expiresAt])
+  @@index([userId])
+  @@map("sessions")
+}
+
+model AuthToken {
+  id        String   @id
+  userId    String   @map("user_id")
+  kind      String
+  expiresAt DateTime @map("expires_at")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("auth_tokens")
+}
+
+model RateLimit {
+  id        String   @id
+  count     Int      @default(1)
+  expiresAt DateTime @map("expires_at")
+
+  @@map("rate_limits")
+}
+
+model Notification {
+  deliveries MessageDelivery[]
+  smsTemplate String? @map("sms_template")
+  smsVariables Json? @map("sms_variables")
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  message   String
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now()) @map("created_at")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@map("notifications")
+}
+
+model AdminAction {
+  id        String   @id @default(uuid())
+  adminId   String   @map("admin_id")
+  targetId  String   @map("target_id")
+  action    String
+  note      String?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("admin_actions")
+}
+
+model Upload {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  mime      String
+  public    Boolean  @default(false)
+  data      Bytes?
+  storagePath String? @map("storage_path")
+  createdAt DateTime @default(now()) @map("created_at")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("uploads")
+}
+
+model MessageDelivery {
+  id String @id
+  notificationId String @map("notification_id")
+  channel String
+  status String @default("PENDING")
+  attempts Int @default(0)
+  nextAttemptAt DateTime @default(now()) @map("next_attempt_at")
+  leaseUntil DateTime? @map("lease_until")
+  leaseToken String? @map("lease_token")
+  providerId String? @map("provider_id")
+  lastError String? @map("last_error")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  notification Notification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+  @@unique([notificationId, channel])
+  @@index([status, nextAttemptAt])
+  @@map("message_deliveries")
+}
+
+model PhoneChallenge {
+  userId String @id @map("user_id")
+  phone String
+  attempts Int @default(0)
+  expiresAt DateTime @map("expires_at")
+  resendAt DateTime @map("resend_at")
+  @@map("phone_challenges")
+}
+
+model PlatformSettings {
+  id String @id @default("platform")
+  commissionBps Int @default(1500) @map("commission_bps")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  @@map("platform_settings")
 }

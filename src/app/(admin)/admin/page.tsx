@@ -1,231 +1,294 @@
 "use client";
-
+import DeliveryOperations from "@/components/DeliveryOperations";
+import { AdminNotifications } from "@/components/AdminNotifications";
 import { useState } from "react";
-import Link from "next/link";
-import { Navbar } from "@/components/layout/Navbar";
-import { 
-  ShieldCheck, 
-  TrendingUp, 
-  Users, 
-  Award, 
-  CheckCircle2, 
-  XCircle, 
-  FileText, 
-  DollarSign, 
-  Calendar,
-  AlertCircle,
-  Eye,
-  Filter
-} from "lucide-react";
-
-interface PendingTrainer {
+import {
+  Shell,
+  Metrics,
+  Empty,
+  Notice,
+  money,
+  request,
+  useResource,
+} from "@/components/ui/marketplace";
+type Person = {
   id: string;
-  name: string;
   email: string;
-  phone: string;
-  neighborhood: string;
-  certTitle: string;
-  certOrg: string;
-  credentialId: string;
-  experience: number;
-  hourlyRate: number;
-  status: "PENDING" | "APPROVED" | "REJECTED";
-}
-
-const INITIAL_PENDING_TRAINERS: PendingTrainer[] = [
-  {
-    id: "app-101",
-    name: "Karan Verma",
-    email: "karan.verma@example.com",
-    phone: "+91 98860 12345",
-    neighborhood: "HSR Layout, Bengaluru",
-    certTitle: "K11 Diploma in Personal Training",
-    certOrg: "K11 Human Performance Academy",
-    credentialId: "K11-BLR-2025-992",
-    experience: 4,
-    hourlyRate: 1100,
-    status: "PENDING",
-  },
-  {
-    id: "app-102",
-    name: "Meera Krishnan",
-    email: "meera.k@example.com",
-    phone: "+91 97401 54321",
-    neighborhood: "Koramangala, Bengaluru",
-    certTitle: "NASM Certified Personal Trainer",
-    certOrg: "National Academy of Sports Medicine",
-    credentialId: "NASM-849201",
-    experience: 6,
-    hourlyRate: 1300,
-    status: "PENDING",
-  },
-];
-
-export default function AdminDashboardPage() {
-  const [trainers, setTrainers] = useState<PendingTrainer[]>(INITIAL_PENDING_TRAINERS);
-  const [activeTab, setActiveTab] = useState<"audits" | "metrics">("audits");
-
-  const handleApprove = (id: string, name: string) => {
-    setTrainers((prev) =>
-      prev.map((t) => (t.id === id ? { ...t, status: "APPROVED" } : t))
-    );
-    alert(`✅ Coach ${name} has been APPROVED! Their profile is now live on the Trainrr discovery directory.`);
+  phoneNumber: string;
+  role: string;
+  status: string;
+  clientProfile: null | {
+    firstName: string;
+    lastName: string;
+    defaultLocationName: string;
+    fitnessGoals: string[];
   };
-
-  const handleReject = (id: string, name: string) => {
-    setTrainers((prev) =>
-      prev.map((t) => (t.id === id ? { ...t, status: "REJECTED" } : t))
-    );
-    alert(`Application for ${name} has been marked as REJECTED.`);
+  trainerProfile: null | {
+    firstName: string;
+    lastName: string;
+    bio: string;
+    homeLocationName: string;
+    yearsExperience: number;
+    hourlyRate: string;
+    verificationStatus: string;
+    certifications: {
+      id: string;
+      title: string;
+      issuingOrganization: string;
+      documentUrl: string;
+      status: string;
+    }[];
   };
-
-  const pendingCount = trainers.filter((t) => t.status === "PENDING").length;
-
+};
+type Booking = {
+  id: string;
+  client: { firstName: string; lastName: string };
+  trainer: { firstName: string; lastName: string };
+  status: string;
+  slot: { slotDate: string; startTime: string };
+  payment: null | {
+    status: string;
+    grossAmount: string;
+    platformFee: string;
+    trainerAmount: string;
+    gatewayPaymentId: string | null;
+  };
+  totalAmount: string;
+};
+export default function Page() {
+  const { data, error, loading, reload } = useResource<{
+    overview: Record<string, number>;
+    users: Person[];
+    bookings: Booking[];
+  }>("/api/admin");
+  const [tab, setTab] = useState("Trainers");
+  const [query, setQuery] = useState("");
+  const [status, setStatus] = useState("");
+  const [note, setNote] = useState("");
+  const [failure, setFailure] = useState("");
+  const [busy, setBusy] = useState("");
+  async function act(id: string, action: string) {
+    setBusy(id);
+    try {
+      await request("/api/admin", "POST", { id, action, note });
+      await reload();
+      setFailure("");
+    } catch (e) {
+      setFailure(e instanceof Error ? e.message : "Unable to update.");
+    } finally {
+      setBusy("");
+    }
+  }
+  const users = data?.users || [];
+  const bookings = data?.bookings || [];
+  const matches = (v: unknown) =>
+    JSON.stringify(v).toLowerCase().includes(query.toLowerCase());
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col font-sans">
-      <Navbar />
-
-      <main className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8 flex-1 w-full">
-        
-        {/* Page Header */}
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-8">
-          <div>
-            <div className="inline-flex items-center gap-1.5 bg-gray-900 text-white text-[11px] font-bold px-3 py-1 rounded-full mb-2">
-              <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" /> Platform Admin & Founder Console
-            </div>
-            <h1 className="text-2xl sm:text-3xl font-black text-gray-900">
-              Trainrr Operations Dashboard
-            </h1>
-          </div>
-
-          <Link
-            href="/trainers"
-            className="text-xs font-bold text-gray-700 bg-white border border-gray-200 hover:bg-gray-100 px-4 py-2.5 rounded-xl shadow-sm transition"
-          >
-            Open Client Marketplace →
-          </Link>
-        </div>
-
-        {/* Financial & Operational KPI Cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-          
-          <div className="bg-white p-5 rounded-2xl border border-gray-200 shadow-sm">
-            <div className="text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-1">Total Platform GMV</div>
-            <div className="text-2xl font-black text-gray-900">₹1,84,000</div>
-            <div className="text-[11px] text-emerald-700 font-semibold mt-1 flex items-center gap-1">
-              <TrendingUp className="w-3 h-3" /> 134 total sessions booked
-            </div>
-          </div>
-
-          <div className="bg-white p-5 rounded-2xl border border-emerald-200 bg-emerald-50/20 shadow-sm">
-            <div className="text-[11px] font-bold text-emerald-800 uppercase tracking-wider mb-1">Net Platform Revenue (15%)</div>
-            <div className="text-2xl font-black text-emerald-950">₹27,600</div>
-            <div className="text-[11px] text-emerald-700 font-semibold mt-1">Founder gross profit</div>
-          </div>
-
-          <div className="bg-white p-5 rounded-2xl border border-gray-200 shadow-sm">
-            <div className="text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-1">Active Verified Coaches</div>
-            <div className="text-2xl font-black text-gray-900">12</div>
-            <div className="text-[11px] text-gray-500 mt-1">Across 5 Bengaluru clusters</div>
-          </div>
-
-          <div className="bg-white p-5 rounded-2xl border border-amber-200 bg-amber-50/30 shadow-sm">
-            <div className="text-[11px] font-bold text-amber-800 uppercase tracking-wider mb-1">Pending Certification Audits</div>
-            <div className="text-2xl font-black text-amber-950">{pendingCount}</div>
-            <div className="text-[11px] text-amber-700 font-semibold mt-1">Requires founder review</div>
-          </div>
-
-        </div>
-
-        {/* Tab Navigation */}
-        <div className="flex border-b border-gray-200 mb-6">
+    <Shell
+      title="Platform operations"
+      subtitle="Review credentials, manage accounts and inspect booking transactions."
+    >
+      <Notice error={error || failure} />
+      <Metrics items={data?.overview || {}} />
+      <AdminNotifications />
+      <DeliveryOperations />
+      <div className="flex flex-wrap gap-2 mb-5">
+        {["Trainers", "Clients", "Bookings", "Payments"].map((t) => (
           <button
-            onClick={() => setActiveTab("audits")}
-            className={`pb-3 px-4 font-bold text-xs sm:text-sm border-b-2 flex items-center gap-2 transition ${
-              activeTab === "audits"
-                ? "border-emerald-600 text-emerald-700 font-extrabold"
-                : "border-transparent text-gray-500 hover:text-gray-700"
-            }`}
+            className={tab === t ? "button" : "nav-pill"}
+            key={t}
+            onClick={() => {
+              setTab(t);
+              setStatus("");
+            }}
           >
-            <Award className="w-4 h-4" />
-            Coach Certification & KYC Audits ({pendingCount})
+            {t}
           </button>
-        </div>
-
-        {/* Coach Application Audits */}
+        ))}
+      </div>
+      <div className="panel grid sm:grid-cols-3 gap-4 mb-6">
+        <label className="field">
+          Search
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Name, email, date or booking ID"
+          />
+        </label>
+        <label className="field">
+          Status filter
+          <input
+            value={status}
+            onChange={(e) => setStatus(e.target.value.toUpperCase())}
+            placeholder="PENDING, CONFIRMED…"
+          />
+        </label>
+        <label className="field">
+          Admin review note
+          <input
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            maxLength={2000}
+          />
+        </label>
+      </div>
+      {loading ? (
+        <Empty>Loading operations…</Empty>
+      ) : tab === "Trainers" || tab === "Clients" ? (
         <div className="space-y-4">
-          {trainers.map((t) => (
-            <div
-              key={t.id}
-              className={`bg-white rounded-3xl p-6 border shadow-sm flex flex-col md:flex-row items-start md:items-center justify-between gap-6 transition ${
-                t.status === "APPROVED"
-                  ? "border-emerald-500 bg-emerald-50/20"
-                  : t.status === "REJECTED"
-                  ? "border-red-200 opacity-60"
-                  : "border-gray-200"
-              }`}
-            >
-              <div className="space-y-2 flex-1">
-                <div className="flex items-center gap-2">
-                  <span
-                    className={`text-[10px] font-extrabold px-2.5 py-0.5 rounded-full ${
-                      t.status === "APPROVED"
-                        ? "bg-emerald-100 text-emerald-800"
-                        : t.status === "REJECTED"
-                        ? "bg-red-100 text-red-800"
-                        : "bg-amber-100 text-amber-800"
-                    }`}
-                  >
-                    {t.status === "APPROVED" ? "Verified & Live" : t.status === "REJECTED" ? "Rejected" : "Pending Audit"}
-                  </span>
-                  <span className="text-xs text-gray-400">Application ID: {t.id}</span>
-                </div>
-
-                <h3 className="text-lg font-bold text-gray-900">{t.name}</h3>
-                <div className="text-xs text-gray-600">{t.email} • {t.phone}</div>
-                <div className="text-xs text-gray-500 font-medium">{t.neighborhood} • {t.experience} Years Exp • ₹{t.hourlyRate}/hr</div>
-
-                {/* Certification Details Box */}
-                <div className="bg-gray-50 border border-gray-200 rounded-2xl p-3.5 mt-2 flex flex-wrap items-center justify-between gap-2 text-xs">
-                  <div>
-                    <div className="font-bold text-gray-900">{t.certTitle}</div>
-                    <div className="text-gray-500 text-[11px]">{t.certOrg} (ID: {t.credentialId})</div>
+          {users
+            .filter(
+              (u) =>
+                u.role === (tab === "Trainers" ? "TRAINER" : "CLIENT") &&
+                matches(u) &&
+                (!status ||
+                  u.status === status ||
+                  u.trainerProfile?.verificationStatus === status),
+            )
+            .map((u) => {
+              const p = u.trainerProfile || u.clientProfile;
+              return (
+                <article className="panel" key={u.id}>
+                  <div className="flex flex-wrap justify-between gap-4">
+                    <div>
+                      <h2 className="text-xl font-bold">
+                        {p?.firstName} {p?.lastName}
+                      </h2>
+                      <p className="text-sm text-slate-500 break-all mt-2">
+                        {u.email} · {u.phoneNumber}
+                      </p>
+                      <span className="badge mt-3">
+                        {u.status} {u.trainerProfile?.verificationStatus}
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap gap-2 items-start">
+                      {u.trainerProfile && (
+                        <>
+                          <button
+                            disabled={busy === u.id}
+                            className="button"
+                            onClick={() => act(u.id, "APPROVE")}
+                          >
+                            Approve
+                          </button>
+                          <button
+                            disabled={busy === u.id}
+                            className="nav-pill"
+                            onClick={() => act(u.id, "REJECT")}
+                          >
+                            Reject
+                          </button>
+                        </>
+                      )}
+                      <button
+                        disabled={busy === u.id}
+                        className="nav-pill"
+                        onClick={() =>
+                          act(
+                            u.id,
+                            u.status === "SUSPENDED" ? "REACTIVATE" : "SUSPEND",
+                          )
+                        }
+                      >
+                        {u.status === "SUSPENDED" ? "Reactivate" : "Suspend"}
+                      </button>
+                    </div>
                   </div>
-                  <span className="text-[11px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-lg">
-                    📄 Document Attached
-                  </span>
+                  {u.trainerProfile && (
+                    <>
+                      <p className="text-sm mt-4">{u.trainerProfile.bio}</p>
+                      <p className="text-sm text-slate-500 mt-2">
+                        {u.trainerProfile.homeLocationName} ·{" "}
+                        {u.trainerProfile.yearsExperience} years ·{" "}
+                        {money(u.trainerProfile.hourlyRate)} / hour
+                      </p>
+                      <div className="mt-4 space-y-2">
+                        {u.trainerProfile.certifications.length ? (
+                          u.trainerProfile.certifications.map((c) => (
+                            <div
+                              key={c.id}
+                              className="p-3 border rounded-xl text-sm"
+                            >
+                              <strong>{c.title}</strong> ·{" "}
+                              {c.issuingOrganization} · {c.status}
+                              {c.documentUrl.startsWith("/api/uploads/") && (
+                                <a
+                                  href={c.documentUrl}
+                                  className="text-emerald-700 underline ml-3"
+                                >
+                                  Download credential for review
+                                </a>
+                              )}
+                            </div>
+                          ))
+                        ) : (
+                          <p className="text-sm text-amber-700">
+                            No certifications submitted.
+                          </p>
+                        )}
+                      </div>
+                    </>
+                  )}
+                  {u.clientProfile && (
+                    <p className="mt-4 text-sm">
+                      {u.clientProfile.defaultLocationName} · Goals:{" "}
+                      {u.clientProfile.fitnessGoals.join(", ") ||
+                        "None specified"}
+                    </p>
+                  )}
+                </article>
+              );
+            })}
+          {!users.length && <Empty>No accounts yet.</Empty>}
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {bookings
+            .filter(
+              (b) =>
+                matches(b) &&
+                (!status ||
+                  b.status === status ||
+                  b.payment?.status === status) &&
+                (tab !== "Payments" || b.payment),
+            )
+            .map((b) => (
+              <article className="panel" key={b.id}>
+                <div className="flex flex-wrap justify-between gap-4">
+                  <h2 className="font-bold">
+                    {b.client.firstName} {b.client.lastName} →{" "}
+                    {b.trainer.firstName} {b.trainer.lastName}
+                  </h2>
+                  <span className="badge">{b.status}</span>
                 </div>
-              </div>
-
-              {/* Action Buttons */}
-              <div className="flex items-center gap-2 w-full md:w-auto shrink-0 justify-end">
-                {t.status === "PENDING" ? (
-                  <>
-                    <button
-                      onClick={() => handleReject(t.id, t.name)}
-                      className="px-4 py-2.5 rounded-xl border border-red-200 text-red-600 hover:bg-red-50 text-xs font-bold transition"
-                    >
-                      Reject
-                    </button>
-                    <button
-                      onClick={() => handleApprove(t.id, t.name)}
-                      className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-md shadow-emerald-200 transition flex items-center gap-1.5"
-                    >
-                      <CheckCircle2 className="w-4 h-4" />
-                      Approve & Publish
-                    </button>
-                  </>
-                ) : (
-                  <div className="text-xs font-bold text-gray-500">
-                    Decision Recorded
+                <p className="mt-2 text-sm">
+                  {b.slot.slotDate.slice(0, 10)} · {b.slot.startTime} IST ·{" "}
+                  {money(b.totalAmount)}
+                </p>
+                <p className="text-xs text-slate-500 mt-2 break-all">{b.id}</p>
+                {b.payment && (
+                  <div className="text-sm mt-3">
+                    <p>
+                      {b.payment.status} · Gross {money(b.payment.grossAmount)}{" "}
+                      · Fee {money(b.payment.platformFee)} · Trainer{" "}
+                      {money(b.payment.trainerAmount)}
+                    </p>
+                    <p className="text-xs mt-2 break-all">
+                      {b.payment.gatewayPaymentId || "Payment not completed"}
+                    </p>
+                    {b.payment.status === "REFUND_PENDING" && (
+                      <p className="text-amber-800 mt-2">
+                        Issue a full refund in the Razorpay dashboard. The
+                        verified refund webhook updates this record.
+                      </p>
+                    )}
                   </div>
                 )}
-              </div>
-            </div>
-          ))}
+              </article>
+            ))}
+          {!bookings.length && <Empty>No bookings yet.</Empty>}
         </div>
-
-      </main>
-    </div>
+      )}
+    </Shell>
   );
 }

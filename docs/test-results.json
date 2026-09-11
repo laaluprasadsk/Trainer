@@ -1,0 +1,7 @@
+{
+  "checks": 118,
+  "passed": true,
+  "artifacts": "/var/folders/mj/69192bl97w3fg95tw8m_qv7h0000gn/T/trainer-e2e-L2jFU5",
+  "date": "2026-09-10T14:18:14.369Z",
+  "payment": "Isolated Razorpay SDK stub and real signature verification; no external charges."
+}
