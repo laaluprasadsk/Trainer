@@ -2,6 +2,5 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "nextjs",
   "buildCommand": "npm run lint && npm run typecheck && npm test && npm run build",
-  "regions": ["syd1"],
-  "crons": [{ "path": "/api/jobs/reminders", "schedule": "*/5 * * * *" }]
+  "regions": ["syd1"]
 }

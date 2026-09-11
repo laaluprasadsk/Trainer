@@ -56,7 +56,7 @@ Store secrets in the hosting dashboard, never in Git or browser code. The one-ti
 4. Build with npm run build. Create the admin using npm run db:admin with private environment variables.
 5. Configure Razorpay webhooks at /api/webhooks/payment for payment.captured, payment.failed and refund.processed. Confirm capture settings and exercise real Razorpay test-mode checkout/refunds; automated local tests use a provider stub.
 6. Verify password-reset and booking email delivery from the verified sender domain. Complete MSG91/DLT setup, then test OTP and each approved booking SMS template.
-7. Schedule the authenticated `/api/jobs/reminders` route. It accepts GET and POST and uses the Vercel Cron authorization convention.
+7. Schedule the authenticated `/api/jobs/reminders` route every five minutes. Vercel Hobby only supports daily schedules, so use Supabase Cron after the deployment URL exists or upgrade to Vercel Pro before restoring a frequent Vercel Cron entry.
 8. Configure backups and test restoration, error/uptime monitoring, request-size limits, rate limits and spend alerts. Set the application/database regions close to your users.
 9. Review uploaded trainer credentials and approve a small initial group. Check their prices, service areas, availability and support procedures.
 10. Repeat the manual checklist on the deployed staging site, including double-booking, session expiry, payment failure and cancellation.
