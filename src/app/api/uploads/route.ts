@@ -1,4 +1,4 @@
-import { storeUpload } from "@/lib/storage";
+import { deleteUpload, storeUpload } from "@/lib/storage";
 import sharp from "sharp";
 import { api, assert } from "@/lib/http";
 import { requireUser, rateLimit } from "@/lib/auth";
@@ -44,6 +44,12 @@ export const POST = api(async (req) => {
       .toBuffer();
     const photo = await storeUpload(u.id, "image/jpeg", normalized, true);
     const url = `/api/avatars/${photo.id}`;
+    const previousUrl =
+      u.role === "CLIENT"
+        ? u.clientProfile?.avatarUrl
+        : u.role === "TRAINER"
+          ? u.trainerProfile?.avatarUrl
+          : null;
     if (u.role === "CLIENT")
       await prisma.clientProfile.update({
         where: { userId: u.id },
@@ -54,6 +60,16 @@ export const POST = api(async (req) => {
         where: { userId: u.id },
         data: { avatarUrl: url },
       });
+    const previousId = previousUrl?.match(/^\/api\/avatars\/([^/]+)$/)?.[1];
+    if (previousId && previousId !== photo.id) {
+      const previous = await prisma.upload.findFirst({
+        where: { id: previousId, userId: u.id, public: true },
+      });
+      if (previous)
+        await deleteUpload(previous).catch(() => {
+          console.error("Previous avatar cleanup failed", previous.id);
+        });
+    }
     return { url };
   }
   const upload = await storeUpload(u.id, mime, data);

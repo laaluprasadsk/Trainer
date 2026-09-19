@@ -50,6 +50,7 @@ export async function notifyBooking(
     data: [client.userId, trainer.userId].map((userId) => ({
       userId,
       message,
+      href: "/bookings",
       ...(booking && smsTemplate
         ? {
             smsTemplate,
@@ -98,6 +99,7 @@ export async function changeBooking(
   },
   id: string,
   action: string,
+  targetSlotId?: string,
 ) {
   return prisma.$transaction(async (tx) => {
     const found = await tx.booking.findUnique({ where: { id } });
@@ -115,7 +117,58 @@ export async function changeBooking(
       where: { id },
       include: { slot: true, payment: true },
     });
-    if (action === "COMPLETE") {
+    if (action === "RESCHEDULE") {
+      assert(
+        user.role === "CLIENT",
+        "Only the client can reschedule this booking.",
+        403,
+      );
+      assert(
+        b.status === "CONFIRMED",
+        "Only confirmed sessions can be rescheduled.",
+        409,
+      );
+      assert(targetSlotId, "Choose a new available time.");
+      assert(
+        slotInstant(b.slot.slotDate, b.slot.startTime).getTime() - Date.now() >=
+          86400000,
+        "Rescheduling requires at least 24 hours notice.",
+        409,
+      );
+      await expireHolds(tx, b.trainerId);
+      const target = await tx.availabilitySlot.findFirst({
+        where: {
+          id: targetSlotId,
+          trainerId: b.trainerId,
+          status: "AVAILABLE",
+        },
+        include: { bookings: { where: activeWhere() } },
+      });
+      assert(
+        target &&
+          target.bookings.length === 0 &&
+          slotInstant(target.slotDate, target.startTime) > new Date(),
+        "The selected replacement time is no longer available.",
+        409,
+      );
+      const minutes = (time: string) =>
+        Number(time.slice(0, 2)) * 60 + Number(time.slice(3, 5));
+      assert(
+        minutes(target.endTime) - minutes(target.startTime) ===
+          minutes(b.slot.endTime) - minutes(b.slot.startTime),
+        "Choose a replacement slot with the same session duration.",
+        409,
+      );
+      await tx.booking.update({ where: { id }, data: { slotId: target.id } });
+      await tx.availabilitySlot.update({
+        where: { id: b.slotId },
+        data: { status: "AVAILABLE" },
+      });
+      await tx.availabilitySlot.update({
+        where: { id: target.id },
+        data: { status: "BOOKED" },
+      });
+    } else if (action === "COMPLETE") {
       assert(
         user.role === "TRAINER",
         "Only the session trainer can complete it.",
@@ -165,7 +218,13 @@ export async function changeBooking(
     await notifyBooking(
       tx,
       b,
-      `Session ${id.slice(0, 8)} ${action === "COMPLETE" ? "completed. You can now leave a review." : "cancelled. Any captured payment is queued for refund review."}`,
+      `Session ${id.slice(0, 8)} ${
+        action === "COMPLETE"
+          ? "completed. You can now leave a review."
+          : action === "RESCHEDULE"
+            ? "rescheduled. Open your booking for the updated time."
+            : "cancelled. Any captured payment is queued for refund review."
+      }`,
       action === "CANCEL" ? "CANCELLED" : undefined,
     );
     return {};

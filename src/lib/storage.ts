@@ -28,8 +28,11 @@ export async function storeUpload(
   isPublic = false,
 ) {
   if (process.env.STORAGE_PROVIDER !== "supabase") {
+    const isolatedTestStorage =
+      process.env.ALLOW_DATABASE_UPLOADS_FOR_TESTS === "true" &&
+      process.env.NODE_OPTIONS?.includes("provider-stub");
     assert(
-      process.env.NODE_ENV !== "production",
+      process.env.NODE_ENV !== "production" || isolatedTestStorage,
       "Production requires object storage.",
       503,
     );
@@ -71,4 +74,22 @@ export async function readUpload(file: Upload) {
   });
   assert(response.ok, "Document storage is temporarily unavailable.", 503);
   return new Uint8Array(await response.arrayBuffer());
+}
+
+export async function deleteUpload(file: Upload) {
+  if (file.storagePath) {
+    const response = await fetch(objectUrl(file.storagePath), {
+      method: "DELETE",
+      headers: config().headers,
+      signal: AbortSignal.timeout(5000),
+    });
+    assert(
+      response.ok || response.status === 404,
+      "Unable to remove the previous photo.",
+      503,
+    );
+  }
+  await prisma.upload.deleteMany({
+    where: { id: file.id, userId: file.userId },
+  });
 }

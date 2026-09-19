@@ -268,6 +268,18 @@ export default function HomePage() {
             <Link href="/contact" className="hover:text-white transition">
               Contact
             </Link>
+            <Link href="/terms" className="hover:text-white transition">
+              Terms
+            </Link>
+            <Link href="/privacy" className="hover:text-white transition">
+              Privacy
+            </Link>
+            <Link
+              href="/cancellation-refunds"
+              className="hover:text-white transition"
+            >
+              Cancellation & refunds
+            </Link>
             <Link href="/parq" className="hover:text-white transition">
               Health Screening (PAR-Q)
             </Link>

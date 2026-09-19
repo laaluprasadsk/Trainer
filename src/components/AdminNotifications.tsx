@@ -14,7 +14,7 @@ export function AdminNotifications() {
           className="text-emerald-700 text-sm"
           onClick={async () => {
             try {
-              await request("/api/notifications", "PATCH");
+              await request("/api/notifications", "PATCH", {});
               await reload();
             } catch (e) {
               setFailure(e instanceof Error ? e.message : "Unable to update.");

@@ -2,6 +2,7 @@
 import { useAuth } from "@/lib/auth-context";
 import { useState } from "react";
 import Image from "next/image";
+import Link from "next/link";
 import { Notice } from "./ui/marketplace";
 export function AvatarUpload() {
   const { user } = useAuth();
@@ -12,7 +13,11 @@ export function AvatarUpload() {
     <section className="panel mb-6">
       <h2 className="font-bold mb-3">Profile photo</h2>
       <p className="text-sm text-slate-500 mb-3">
-        Your photo is public. PNG or JPEG, maximum 2 MB.
+        Your photo is public. PNG or JPEG, maximum 2 MB.{" "}
+        <Link className="underline" href="/privacy">
+          How Trainrr uses profile information
+        </Link>
+        .
       </p>
       <Notice error={error} />
       {(url || user?.avatarUrl) && (

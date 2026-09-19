@@ -1,6 +1,7 @@
 "use client";
 import { AvatarUpload } from "@/components/AvatarUpload";
 import { FormEvent, useState } from "react";
+import Link from "next/link";
 import {
   Shell,
   Notice,
@@ -9,7 +10,7 @@ import {
   useResource,
 } from "@/components/ui/marketplace";
 export default function Page() {
-  const { data, error, loading } = useResource<{
+  const { data, error, loading, setData } = useResource<{
     profile: {
       firstName: string;
       lastName: string;
@@ -26,9 +27,19 @@ export default function Page() {
     e.preventDefault();
     setBusy(true);
     setFailure("");
+    setMessage("");
     const f = Object.fromEntries(new FormData(e.currentTarget));
     try {
-      await request(
+      const saved = await request<{
+        profile: {
+          firstName: string;
+          lastName: string;
+          phone: string;
+          email: string;
+          defaultLocationName: string;
+          fitnessGoals: string[];
+        };
+      }>(
         password ? "/api/auth/password" : "/api/client/profile",
         "POST",
         password
@@ -41,6 +52,7 @@ export default function Page() {
                 .filter(Boolean),
             },
       );
+      if (!password && saved.profile) setData({ profile: saved.profile });
       setMessage(password ? "Password updated." : "Profile saved.");
     } catch (e) {
       setFailure(e instanceof Error ? e.message : "Unable to save.");
@@ -60,6 +72,7 @@ export default function Page() {
       ) : (
         data && (
           <form
+            key={`${data.profile.firstName}:${data.profile.lastName}:${data.profile.phone}:${data.profile.defaultLocationName}:${data.profile.fitnessGoals.join("|")}`}
             onSubmit={(e) => save(e)}
             className="panel grid sm:grid-cols-2 gap-5 mb-8"
           >
@@ -73,7 +86,20 @@ export default function Page() {
                 {label}
                 <input
                   name={k}
-                  required
+                  required={k !== "defaultLocationName"}
+                  maxLength={
+                    k === "phone" ? 30 : k === "defaultLocationName" ? 160 : 80
+                  }
+                  type={k === "phone" ? "tel" : "text"}
+                  autoComplete={
+                    k === "phone"
+                      ? "tel"
+                      : k === "firstName"
+                        ? "given-name"
+                        : k === "lastName"
+                          ? "family-name"
+                          : "street-address"
+                  }
                   defaultValue={data.profile[k as "firstName"] || ""}
                 />
               </label>
@@ -82,6 +108,7 @@ export default function Page() {
               Fitness goals (comma separated)
               <textarea
                 name="fitnessGoals"
+                maxLength={1200}
                 defaultValue={data.profile.fitnessGoals.join(", ")}
               />
             </label>
@@ -123,6 +150,23 @@ export default function Page() {
           Change password
         </button>
       </form>
+      <section className="panel mt-6 text-sm text-slate-600">
+        <h2 className="mb-2 text-lg font-bold text-slate-900">Account data</h2>
+        <p>
+          To request an email change, data copy, correction, or account
+          deletion, contact support from your account email. Some booking and
+          payment records may need to be retained for legal, accounting, fraud,
+          or dispute purposes.
+        </p>
+        <div className="mt-4 flex gap-3">
+          <Link href="/contact" className="nav-pill">
+            Submit a data request
+          </Link>
+          <Link href="/privacy" className="nav-pill">
+            Privacy information
+          </Link>
+        </div>
+      </section>
     </Shell>
   );
 }

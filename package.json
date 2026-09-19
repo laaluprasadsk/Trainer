@@ -10,7 +10,7 @@
     "postinstall": "prisma generate",
     "typecheck": "tsc --noEmit",
     "test": "node --test tests/domain.test.cjs",
-    "test:e2e": "node scripts/test-e2e.mjs",
+    "test:e2e": "npm run build && node scripts/test-e2e.mjs",
     "db:migrate": "prisma migrate deploy",
     "db:admin": "node scripts/create-admin.mjs",
     "format": "prettier --write \"src/**/*.{ts,tsx}\"",

@@ -42,6 +42,23 @@ export default function Page() {
           <button disabled={busy} className="button">
             Send message
           </button>
+          <p className="text-sm text-slate-500">
+            {process.env.NEXT_PUBLIC_SUPPORT_EMAIL ? (
+              <>
+                You can also email{" "}
+                <a
+                  className="underline"
+                  href={`mailto:${process.env.NEXT_PUBLIC_SUPPORT_EMAIL}`}
+                >
+                  {process.env.NEXT_PUBLIC_SUPPORT_EMAIL}
+                </a>
+                .{" "}
+              </>
+            ) : (
+              "Use this form to reach the platform team. "
+            )}
+            We aim to respond within two business days.
+          </p>
         </form>
       </main>
     </>

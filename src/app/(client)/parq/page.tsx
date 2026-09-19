@@ -376,7 +376,10 @@ export default function ParqScreeningPage() {
               />
               <span className="text-xs text-gray-700 font-medium">
                 I have read, understood, and digitally accept the{" "}
-                <strong>Assumption of Risk & Exercise Liability Waiver</strong>.
+                <strong>Assumption of Risk & Exercise Liability Waiver</strong>.{" "}
+                <Link className="underline" href="/privacy">
+                  Read how PAR-Q health information is handled.
+                </Link>
               </span>
             </label>
           </div>

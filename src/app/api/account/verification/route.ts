@@ -22,18 +22,23 @@ export const POST = api(async (req) => {
     assert(process.env.APP_URL, "Email verification is not configured.", 503);
     const token = randomBytes(32).toString("hex");
     const id = digest(token);
-    await prisma.authToken.create({
-      data: {
-        id,
-        userId: user.id,
-        kind: "VERIFY_EMAIL",
-        expiresAt: new Date(Date.now() + 1800000),
-      },
+    await prisma.$transaction(async (tx) => {
+      await tx.authToken.deleteMany({
+        where: { userId: user.id, kind: "VERIFY_EMAIL" },
+      });
+      await tx.authToken.create({
+        data: {
+          id,
+          userId: user.id,
+          kind: "VERIFY_EMAIL",
+          expiresAt: new Date(Date.now() + 1800000),
+        },
+      });
     });
     await sendEmail(
       user.email,
       "Verify your Trainrr email",
-      `Confirm your email within 30 minutes. Sign in, then open this link and select Confirm email:\n${process.env.APP_URL}/verify-account?token=${token}`,
+      `Confirm your email within 30 minutes by opening this secure link:\n${process.env.APP_URL}/verify-account?token=${token}\n\nIf you did not create this account, you can ignore this email.`,
       `verify-${id}`,
     );
     return {
@@ -41,6 +46,10 @@ export const POST = api(async (req) => {
     };
   }
   if (action === "VERIFY_EMAIL") {
+    assert(
+      typeof b.token === "string" && b.token.length > 0,
+      "This verification link is missing, invalid, expired or already used.",
+    );
     const id = digest(text(b.token, "Verification token", 100));
     await prisma.$transaction(async (tx) => {
       const consumed = await tx.authToken.deleteMany({

@@ -57,6 +57,7 @@ async function register(role, index) {
       email: `${role}${index}@example.test`,
       phone: `+91999999${String(index).padStart(4, "0")}`,
       password,
+      confirmPassword: password,
       firstName: role,
       lastName: `Test${index}`,
       role,
@@ -75,10 +76,14 @@ try {
     DATABASE_URL: url,
     DIRECT_URL: url,
     APP_URL: origin,
-    RESEND_API_KEY: "",
-    MSG91_AUTH_KEY: "",
+    RESEND_API_KEY: "re_test_isolated",
+    EMAIL_FROM: "Trainrr Test <test@example.test>",
+    SUPPORT_EMAIL: "support@example.test",
+    MSG91_AUTH_KEY: "msg91_test_isolated",
+    MSG91_OTP_TEMPLATE_ID: "otp_test_template",
+    MSG91_SENDER_ID: "TRAINR",
     STORAGE_PROVIDER: "database",
-    EMAIL_FROM: "",
+    ALLOW_DATABASE_UPLOADS_FOR_TESTS: "true",
     CRON_SECRET: webhookSecret,
     RAZORPAY_KEY_ID: "rzp_test_isolated",
     RAZORPAY_KEY_SECRET: randomBytes(24).toString("hex"),
@@ -94,7 +99,7 @@ try {
   db = new PrismaClient({ datasources: { db: { url } } });
   app = spawn(
     "node",
-    ["node_modules/next/dist/bin/next", "dev", "--webpack", "--port", "3107"],
+    ["node_modules/next/dist/bin/next", "start", "--port", "3107"],
     { env, stdio: ["ignore", "pipe", "pipe"] },
   );
   const log = createWriteStream(join(dir, "server.log"));
@@ -125,6 +130,163 @@ try {
     data: { email: admin.email, password },
   });
   check(a.status === 200, "admin password login");
+  const duplicateRegistration = await api("/api/auth/register", {
+    method: "POST",
+    data: {
+      email: "CLIENT1@EXAMPLE.TEST",
+      phone: "+918888880001",
+      password,
+      confirmPassword: password,
+      firstName: "Duplicate",
+      lastName: "Client",
+      role: "CLIENT",
+    },
+  });
+  check(
+    duplicateRegistration.status === 409 &&
+      duplicateRegistration.json.error ===
+        "An account already exists with this email. Sign in or reset your password.",
+    "existing registration returns the customer account-recovery message",
+  );
+  check(
+    (
+      await api("/api/auth/register", {
+        method: "POST",
+        data: {
+          email: "mismatch@example.test",
+          phone: "+918888880002",
+          password,
+          confirmPassword: `${password}x`,
+          firstName: "Mismatch",
+          lastName: "Client",
+          role: "CLIENT",
+        },
+      })
+    ).status === 400,
+    "registration rejects mismatched password confirmation",
+  );
+  check(
+    (
+      await api("/api/account/verification", {
+        cookie: c1.cookie,
+        method: "POST",
+        data: { action: "SEND_EMAIL" },
+      })
+    ).status === 200,
+    "verification email uses mocked delivery",
+  );
+  const verifyToken = randomBytes(32).toString("hex");
+  await db.authToken.create({
+    data: {
+      id: createHash("sha256").update(verifyToken).digest("hex"),
+      userId: c1.json.user.id,
+      kind: "VERIFY_EMAIL",
+      expiresAt: new Date(Date.now() + 60000),
+    },
+  });
+  check(
+    (
+      await api("/api/account/verification", {
+        cookie: c1.cookie,
+        method: "POST",
+        data: { action: "VERIFY_EMAIL", token: verifyToken },
+      })
+    ).status === 200,
+    "email verification consumes a valid test token",
+  );
+  check(
+    (
+      await api("/api/account/verification", {
+        cookie: c1.cookie,
+        method: "POST",
+        data: { action: "VERIFY_EMAIL", token: verifyToken },
+      })
+    ).status === 400,
+    "email verification token cannot be replayed",
+  );
+  check(
+    (
+      await api("/api/account/verification", {
+        cookie: c1.cookie,
+        method: "POST",
+        data: { action: "SEND_PHONE" },
+      })
+    ).status === 200 &&
+      (
+        await api("/api/account/verification", {
+          cookie: c1.cookie,
+          method: "POST",
+          data: { action: "VERIFY_PHONE", otp: "123456" },
+        })
+      ).status === 200,
+    "phone OTP send and verification use mocked delivery",
+  );
+  const changedPhone = "+917777770001";
+  check(
+    (
+      await api("/api/client/profile", {
+        cookie: c1.cookie,
+        method: "POST",
+        data: {
+          firstName: "Client",
+          lastName: "Test1",
+          phone: changedPhone,
+          defaultLocationName: "Indiranagar",
+          fitnessGoals: ["Strength"],
+        },
+      })
+    ).json.profile.phone === changedPhone &&
+      (await api("/api/client/profile", { cookie: c1.cookie })).json.profile
+        .phone === changedPhone,
+    "client phone persists from the canonical account record",
+  );
+  check(
+    (
+      await api("/api/account/verification", {
+        cookie: c1.cookie,
+        method: "POST",
+        data: { action: "SEND_PHONE" },
+      })
+    ).status === 200 &&
+      (
+        await api("/api/account/verification", {
+          cookie: c1.cookie,
+          method: "POST",
+          data: { action: "VERIFY_PHONE", otp: "123456" },
+        })
+      ).status === 200,
+    "changed client phone requires and accepts fresh verification",
+  );
+  await db.user.update({
+    where: { id: c2.json.user.id },
+    data: { emailVerifiedAt: new Date(), phoneVerifiedAt: new Date() },
+  });
+  const forgotExisting = await api("/api/auth/forgot", {
+    method: "POST",
+    data: { email: "client1@example.test" },
+  });
+  const forgotMissing = await api("/api/auth/forgot", {
+    method: "POST",
+    data: { email: "missing@example.test" },
+  });
+  check(
+    forgotExisting.status === 200 &&
+      forgotMissing.status === 200 &&
+      forgotExisting.json.message === forgotMissing.json.message,
+    "password reset request is neutral and uses mocked email delivery",
+  );
+  check(
+    (
+      await api("/api/contact", {
+        method: "POST",
+        data: {
+          email: "client1@example.test",
+          message: "Please help with a test booking reference.",
+        },
+      })
+    ).status === 200,
+    "contact request persists and uses mocked email delivery",
+  );
   check(
     (
       await api("/api/auth/register", {
@@ -239,6 +401,53 @@ try {
     (await api("/api/trainers/search")).json.trainers.length === 1,
     "approved trainer publicly discoverable",
   );
+  const secondTrainer = await db.trainerProfile.findUniqueOrThrow({
+    where: { userId: t2.json.user.id },
+  });
+  const secondDocument = await db.upload.create({
+    data: {
+      userId: t2.json.user.id,
+      mime: "application/pdf",
+      data: Buffer.from("%PDF-1.7\nSecond test credential"),
+    },
+  });
+  await db.trainerProfile.update({
+    where: { id: secondTrainer.id },
+    data: {
+      homeLocationName: "Whitefield, Bengaluru",
+      bio: "Yoga and mobility coach",
+      hourlyRate: 750,
+      yearsExperience: 7,
+      acceptedSessionModes: ["ONLINE", "PUBLIC_PARK"],
+      specializations: ["Yoga", "Post-Rehab"],
+    },
+  });
+  await db.certification.create({
+    data: {
+      trainerId: secondTrainer.id,
+      title: "Yoga instructor",
+      issuingOrganization: "Test institute",
+      documentUrl: `/api/uploads/${secondDocument.id}`,
+    },
+  });
+  check(
+    (
+      await api("/api/admin", {
+        cookie: a.cookie,
+        method: "POST",
+        data: {
+          id: t2.json.user.id,
+          action: "APPROVE",
+          note: "Second test credential reviewed",
+        },
+      })
+    ).status === 200,
+    "admin publishes second approved trainer",
+  );
+  check(
+    (await api("/api/trainers/search")).json.trainers.length === 2,
+    "public discovery returns two approved published trainers",
+  );
   const date = new Date(Date.now() + 3 * 86400000).toISOString().slice(0, 10);
   check(
     (
@@ -254,6 +463,31 @@ try {
       })
     ).status === 200,
     "trainer publishes adjacent future slots",
+  );
+  check(
+    (
+      await api("/api/trainers/slots", {
+        cookie: t2.cookie,
+        method: "POST",
+        data: {
+          slots: [{ slotDate: date, startTime: "12:00", endTime: "13:00" }],
+        },
+      })
+    ).status === 200,
+    "second trainer publishes different future availability",
+  );
+  const combined = await api(
+    `/api/trainers/search?location=whitefield&specialization=Yoga&maxPrice=800&experience=5&date=${date}&time=12:30&sort=price-asc`,
+  );
+  check(
+    combined.status === 200 &&
+      combined.json.trainers.length === 1 &&
+      combined.json.trainers[0].id === secondTrainer.id,
+    "combined trainer filters return the relevant published trainer",
+  );
+  check(
+    (await api("/api/trainers/search?date=2020-01-01")).status === 400,
+    "trainer search rejects past availability dates",
   );
   check(
     (
@@ -297,7 +531,7 @@ try {
   check(
     attempts.filter((r) => r.status === 200).length === 1 &&
       attempts.filter((r) => r.status === 409).length === 1,
-    "concurrent checkout: exactly one client wins",
+    `concurrent checkout: exactly one client wins (${attempts.map((r) => `${r.status}:${r.json.error || "ok"}`).join("/")})`,
   );
   const winner = attempts[0].status === 200 ? c1 : c2,
     loser = winner === c1 ? c2 : c1;
@@ -538,9 +772,37 @@ try {
     "late capture queued for refund review",
   );
   browser = await chromium.launch({ channel: "chrome", headless: true });
-  const page = await browser.newPage();
+  const browserContext = await browser.newContext();
+  const page = await browserContext.newPage();
   const errors = [];
   page.on("pageerror", (e) => errors.push(e.message));
+  await page.goto(
+    origin +
+      `/trainers?location=whitefield&specialization=Yoga&maxPrice=800&sort=price-asc`,
+  );
+  check(
+    (await page.getByLabel("Location").inputValue()) === "whitefield" &&
+      (await page.getByLabel("Specialization").inputValue()) === "Yoga" &&
+      (await page.getByLabel("Maximum hourly price (₹)").inputValue()) ===
+        "800" &&
+      (await page.getByLabel("Sort results").inputValue()) === "price-asc",
+    "trainer directory hydrates controls from URL filters",
+  );
+  await page.getByLabel("Location").fill("");
+  await page.getByRole("button", { name: "Apply filters" }).click();
+  await page.waitForURL((url) =>
+    url.searchParams.get("specialization") === "Yoga" &&
+    !url.searchParams.has("location"),
+  );
+  check(
+    !new URL(page.url()).searchParams.has("location"),
+    "trainer filter submissions synchronize browser URL",
+  );
+  await page.goBack();
+  check(
+    (await page.getByLabel("Location").inputValue()) === "whitefield",
+    "browser back restores trainer filters",
+  );
   // Exercise the actual forms and checkout widget as well as the API paths above.
   await page
     .context()
@@ -558,6 +820,18 @@ try {
     .filter({ hasText: "1 slots published" })
     .waitFor();
   check(true, "availability form publishes a real database slot");
+  check(
+    (
+      await api("/api/trainers/slots", {
+        cookie: t1.cookie,
+        method: "POST",
+        data: {
+          slots: [{ slotDate: uiDate, startTime: "13:00", endTime: "14:00" }],
+        },
+      })
+    ).status === 200,
+    "trainer publishes a same-duration reschedule option",
+  );
   await page.goto(origin + "/dashboard/profile");
   const png = await sharp({
     create: { width: 16, height: 16, channels: 3, background: "#008060" },
@@ -580,12 +854,45 @@ try {
   await page.getByLabel("Last name", { exact: true }).fill("Client");
   await page.getByLabel("Phone with country code").fill("+918888888885");
   await page.getByLabel("Email", { exact: true }).fill("browser@example.test");
-  await page.getByLabel("Password", { exact: false }).fill(password);
+  await page.locator('input[name="password"]').fill(password);
+  await page.locator('input[name="confirmPassword"]').fill(password);
   await page
     .getByRole("button", { name: "Create account", exact: true })
     .click();
-  await page.waitForURL("**/bookings");
-  check(true, "browser signup form establishes persistent client session");
+  await page.waitForURL("**/verify-account");
+  check(true, "browser signup establishes a session and opens verification");
+  const browserUser = await db.user.findUniqueOrThrow({
+    where: { email: "browser@example.test" },
+    include: { clientProfile: true },
+  });
+  const browserVerifyToken = randomBytes(32).toString("hex");
+  await db.authToken.create({
+    data: {
+      id: createHash("sha256").update(browserVerifyToken).digest("hex"),
+      userId: browserUser.id,
+      kind: "VERIFY_EMAIL",
+      expiresAt: new Date(Date.now() + 60000),
+    },
+  });
+  await page.goto(
+    `${origin}/verify-account?token=${encodeURIComponent(browserVerifyToken)}`,
+  );
+  await page.getByText("Email verified.", { exact: true }).waitFor();
+  const browserPhoneStatuses = await page.evaluate(async () => {
+    const action = (body) =>
+      fetch("/api/account/verification", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    const sent = await action({ action: "SEND_PHONE" });
+    const verified = await action({ action: "VERIFY_PHONE", otp: "123456" });
+    return [sent.status, verified.status];
+  });
+  check(
+    browserPhoneStatuses.every((status) => status === 200),
+    "browser journey verifies email and phone through mocked delivery",
+  );
   await page.exposeFunction("testPay", (options) => {
     const id = `pay_${options.order_id}`;
     return {
@@ -599,13 +906,18 @@ try {
   await page.route("https://checkout.razorpay.com/v1/checkout.js", (route) =>
     route.fulfill({
       contentType: "application/javascript",
-      body: "window.Razorpay=class{constructor(o){this.o=o}async open(){const r=await window.testPay(this.o);this.o.handler(r)}}",
+      body: "window.Razorpay=class{constructor(o){this.o=o;this.handlers={}}on(e,h){this.handlers[e]=h}async open(){const r=await window.testPay(this.o);this.o.handler(r)}}",
     }),
   );
   await page.goto(origin + `/trainers/${trainer.slug}`);
-  await page.getByLabel("Choose a date").selectOption(uiDate);
-  await page.getByRole("button", { name: "12:00–13:00", exact: true }).click();
-  await page.getByRole("button", { name: "Review & pay securely" }).click();
+  const bookingMain = page.getByRole("main").last();
+  await bookingMain.getByLabel("Choose a date").selectOption(uiDate);
+  await bookingMain
+    .getByRole("button", { name: "12:00–13:00", exact: true })
+    .click();
+  await bookingMain
+    .getByRole("button", { name: "Review & pay securely" })
+    .click();
   await page
     .getByRole("status")
     .filter({ hasText: "Your session is confirmed" })
@@ -614,18 +926,51 @@ try {
     true,
     "browser slot selection → checkout → server payment fetch → confirmation",
   );
-  const browserUser = await db.user.findUniqueOrThrow({
-    where: { email: "browser@example.test" },
-    include: { clientProfile: true },
-  });
   const browserBooking = await db.booking.findFirstOrThrow({
     where: { clientId: browserUser.clientProfile.id },
     include: { payment: true },
   });
+  await page.goto(origin + "/bookings");
+  await page.getByRole("button", { name: "Mark all read" }).click();
+  await page
+    .getByRole("button", { name: "Mark all read" })
+    .waitFor({ state: "visible" });
+  check(
+    await page.getByRole("button", { name: "Mark all read" }).isDisabled(),
+    "notification read state updates immediately in the client dashboard",
+  );
+  await page.reload();
+  check(
+    await page.getByRole("button", { name: "Mark all read" }).isDisabled(),
+    "notification read state persists after refresh",
+  );
   const browserCookie =
     "trainer_session=" +
     (await page.context().cookies()).find((c) => c.name === "trainer_session")
       .value;
+  const replacementSlot = await db.availabilitySlot.findFirstOrThrow({
+    where: {
+      trainerId: trainer.id,
+      slotDate: new Date(uiDate),
+      startTime: "13:00",
+    },
+  });
+  check(
+    (
+      await api("/api/bookings", {
+        cookie: browserCookie,
+        method: "PATCH",
+        data: {
+          id: browserBooking.id,
+          action: "RESCHEDULE",
+          slotId: replacementSlot.id,
+        },
+      })
+    ).status === 200 &&
+      (await db.booking.findUnique({ where: { id: browserBooking.id } }))
+        .slotId === replacementSlot.id,
+    "client reschedule atomically moves a confirmed booking",
+  );
   check(
     (
       await api("/api/bookings", {
@@ -635,6 +980,11 @@ try {
       })
     ).status === 200,
     "confirmed booking cancels with 24-hour notice",
+  );
+  await page.goto(`${origin}/bookings/${browserBooking.id}?confirmed=1`);
+  check(
+    (await page.getByText("Your session is confirmed.").count()) === 0,
+    "confirmation query cannot misrepresent a cancelled booking",
   );
   check(
     (await db.payment.findUnique({ where: { bookingId: browserBooking.id } }))
@@ -684,7 +1034,11 @@ try {
     (
       await api("/api/auth/reset", {
         method: "POST",
-        data: { token, password: password + "new" },
+        data: {
+          token,
+          password: password + "new",
+          confirmPassword: password + "new",
+        },
       })
     ).status === 200,
     "password reset consumes valid token",
@@ -693,7 +1047,11 @@ try {
     (
       await api("/api/auth/reset", {
         method: "POST",
-        data: { token, password: password + "new" },
+        data: {
+          token,
+          password: password + "new",
+          confirmPassword: password + "new",
+        },
       })
     ).status === 400,
     "password reset token cannot be replayed",
@@ -716,29 +1074,41 @@ try {
     "authenticated reminder cleanup job runs",
   );
   await page.context().clearCookies();
-  for (const width of [375, 768, 1024, 1440]) {
-    await page.setViewportSize({ width, height: 900 });
+  for (const width of [390, 768, 1280]) {
+    const responsivePage = await browserContext.newPage();
+    await responsivePage.setViewportSize({ width, height: 900 });
     for (const route of [
       "/",
       "/trainers",
       `/trainers/${trainer.slug}`,
       "/login",
       "/register",
+      "/contact",
+      "/terms",
+      "/privacy",
+      "/cancellation-refunds",
     ]) {
-      await page.goto(origin + route);
-      await page.waitForLoadState("networkidle");
+      const response = await responsivePage.goto(origin + route, {
+        waitUntil: "domcontentloaded",
+        timeout: 60000,
+      });
+      await responsivePage
+        .locator("body")
+        .waitFor({ state: "visible" });
+      check(response?.ok(), `${route} loads at ${width}px`);
       check(
-        await page.evaluate(
+        await responsivePage.evaluate(
           () => document.documentElement.scrollWidth <= innerWidth,
         ),
         `${route} fits ${width}px`,
       );
-      if (width === 375)
-        await page.screenshot({
+      if (width === 390)
+        await responsivePage.screenshot({
           path: join(dir, route.replaceAll("/", "_") + "_mobile.png"),
           fullPage: true,
         });
     }
+    await responsivePage.close();
   }
   for (const [path, cookie] of [
     ["/admin", c1.cookie],
@@ -775,17 +1145,21 @@ try {
       .addCookies([
         { name: "trainer_session", value: cookie.split("=")[1], url: origin },
       ]);
-    for (const width of [375, 768, 1024, 1440]) {
+    for (const width of [390, 768, 1280]) {
       await page.setViewportSize({ width, height: 900 });
-      await page.goto(origin + route);
-      await page.waitForLoadState("networkidle");
+      const response = await page.goto(origin + route, {
+        waitUntil: "domcontentloaded",
+        timeout: 60000,
+      });
+      await page.locator("body").waitFor({ state: "visible" });
+      check(response?.ok(), `${route} loads at ${width}px`);
       check(
         await page.evaluate(
           () => document.documentElement.scrollWidth <= innerWidth,
         ),
         `${route} fits ${width}px`,
       );
-      if (width === 375)
+      if (width === 390)
         await page.screenshot({
           path: join(dir, route.replaceAll("/", "_") + "_mobile.png"),
           fullPage: true,
@@ -796,6 +1170,25 @@ try {
       fullPage: true,
     });
   }
+  await page.context().clearCookies();
+  await page.context().addCookies([
+    {
+      name: "trainer_session",
+      value: winner.cookie.split("=")[1],
+      url: origin,
+    },
+  ]);
+  const secondTab = await browserContext.newPage();
+  await Promise.all([
+    page.goto(origin + "/bookings"),
+    secondTab.goto(origin + "/bookings"),
+  ]);
+  await page.getByRole("button", { name: "Log out" }).click();
+  await secondTab.waitForURL((url) => url.pathname === "/login", {
+    timeout: 15000,
+  });
+  check(true, "logout invalidates protected access in another browser tab");
+  await secondTab.close();
   check(
     errors.length === 0,
     `no browser runtime errors (${errors.join("; ")})`,

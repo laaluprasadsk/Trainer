@@ -6,7 +6,7 @@ export default async function Layout({
   children: React.ReactNode;
 }) {
   const user = await currentUser();
-  if (!user) redirect("/login");
+  if (!user) redirect("/login?next=/admin");
   if (user.role !== "ADMIN") redirect("/");
   return children;
 }

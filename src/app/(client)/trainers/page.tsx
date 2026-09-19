@@ -1,186 +1,310 @@
 "use client";
-import { FormEvent, useState, useEffect } from "react";
+
+import Image from "next/image";
 import Link from "next/link";
+import { FormEvent, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Navbar } from "@/components/layout/Navbar";
 import { Empty, Notice, money, useResource } from "@/components/ui/marketplace";
+
+const SPECIALIZATIONS = [
+  "Strength & Conditioning",
+  "Hypertrophy",
+  "Fat Loss",
+  "Calisthenics",
+  "Post-Rehab",
+  "Yoga",
+];
+
 type Trainer = {
   id: string;
   slug: string;
+  avatarUrl: string | null;
   firstName: string;
   lastName: string;
-  bio: string;
+  bio: string | null;
   homeLocationName: string;
   specializations: string[];
+  acceptedSessionModes: string[];
   hourlyRate: number;
   ratingAvg: number;
   ratingCount: number;
   yearsExperience: number;
   availableSlotsCount: number;
+  nextAvailableAt: string | null;
 };
-export default function Page() {
-  const [query, setQuery] = useState("");
-  useEffect(() => {
-    queueMicrotask(() => setQuery(window.location.search.slice(1)));
-  }, []);
+
+function todayInKolkata() {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+}
+
+function TrainerDirectory() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const query = searchParams.toString();
   const { data, error, loading } = useResource<{ trainers: Trainer[] }>(
-    `/api/trainers/search?${query}`,
+    `/api/trainers/search${query ? `?${query}` : ""}`,
   );
-  function filter(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    setQuery(
-      new URLSearchParams(
-        Object.fromEntries(new FormData(e.currentTarget)) as Record<
-          string,
-          string
-        >,
-      ).toString(),
-    );
+
+  function filter(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const next = new URLSearchParams();
+    for (const [key, value] of new FormData(event.currentTarget)) {
+      const normalized = String(value).trim();
+      if (normalized) next.set(key, normalized);
+    }
+    router.push(`/trainers${next.size ? `?${next}` : ""}`);
   }
+
   return (
     <>
       <Navbar />
       <main className="market-shell">
         <p className="eyebrow">EXPERT SUPPORT. YOUR SCHEDULE.</p>
-        <h1 className="text-4xl sm:text-5xl font-bold tracking-tight">
+        <h1 className="text-4xl font-bold tracking-tight sm:text-5xl">
           Find your kind of coach.
         </h1>
-        <p className="text-slate-500 mt-4 mb-8">
-          Explore verified professionals and make room for a stronger you.
+        <p className="mb-8 mt-4 text-slate-500">
+          Browse approved professionals. Availability and prices come directly
+          from each trainer&apos;s published schedule.
         </p>
         <form
+          key={query}
           onSubmit={filter}
-          className="panel grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8"
+          className="panel mb-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4"
         >
           <label className="field">
             Name or keyword
-            <input name="q" placeholder="Search trainers" />
+            <input
+              name="q"
+              placeholder="Search trainers"
+              defaultValue={searchParams.get("q") || ""}
+            />
           </label>
           <label className="field">
             Location
-            <input name="location" placeholder="Bengaluru" />
+            <input
+              name="location"
+              placeholder="Bengaluru"
+              defaultValue={searchParams.get("location") || ""}
+            />
           </label>
           <label className="field">
             Specialization
-            <select name="specialization">
+            <select
+              name="specialization"
+              defaultValue={searchParams.get("specialization") || ""}
+            >
               <option value="">All categories</option>
-              {[
-                "Strength & Conditioning",
-                "Hypertrophy",
-                "Fat Loss",
-                "Calisthenics",
-                "Post-Rehab",
-                "Yoga",
-              ].map((s) => (
-                <option key={s}>{s}</option>
+              {SPECIALIZATIONS.map((value) => (
+                <option key={value}>{value}</option>
               ))}
             </select>
           </label>
           <label className="field">
-            Method
-            <select name="mode">
+            Training method
+            <select name="mode" defaultValue={searchParams.get("mode") || ""}>
               <option value="">All methods</option>
-              {["ONLINE", "CLIENT_HOME", "TRAINER_GYM", "PUBLIC_PARK"].map(
-                (m) => (
-                  <option key={m} value={m}>
-                    {m.replaceAll("_", " ")}
-                  </option>
-                ),
-              )}
+              {[
+                ["ONLINE", "Online"],
+                ["CLIENT_HOME", "At my home"],
+                ["TRAINER_GYM", "Trainer gym"],
+                ["PUBLIC_PARK", "Public park"],
+              ].map(([value, label]) => (
+                <option key={value} value={value}>
+                  {label}
+                </option>
+              ))}
             </select>
           </label>
           <label className="field">
-            Max hourly price (₹)
-            <input name="maxPrice" type="number" min="0" />
+            Maximum hourly price (₹)
+            <input
+              name="maxPrice"
+              type="number"
+              min="0"
+              step="1"
+              defaultValue={searchParams.get("maxPrice") || ""}
+            />
           </label>
           <label className="field">
             Minimum rating
-            <select name="rating">
+            <select
+              name="rating"
+              defaultValue={searchParams.get("rating") || ""}
+            >
               <option value="">Any rating</option>
-              <option>4</option>
-              <option>4.5</option>
+              <option value="4">4+</option>
+              <option value="4.5">4.5+</option>
             </select>
           </label>
           <label className="field">
-            Experience (years)
-            <input name="experience" type="number" min="0" max="80" />
+            Minimum experience
+            <input
+              name="experience"
+              type="number"
+              min="0"
+              max="80"
+              step="1"
+              defaultValue={searchParams.get("experience") || ""}
+            />
           </label>
           <label className="field">
             Available date (IST)
-            <input name="date" type="date" />
+            <input
+              name="date"
+              type="date"
+              min={todayInKolkata()}
+              defaultValue={searchParams.get("date") || ""}
+            />
           </label>
           <label className="field">
             Available time (IST)
-            <input name="time" type="time" />
+            <input
+              name="time"
+              type="time"
+              defaultValue={searchParams.get("time") || ""}
+            />
           </label>
-          <button className="button self-end">Find trainers</button>
+          <label className="field">
+            Sort results
+            <select
+              name="sort"
+              defaultValue={searchParams.get("sort") || "recommended"}
+            >
+              <option value="recommended">Recommended</option>
+              <option value="rating">Rating</option>
+              <option value="price-asc">Price: low to high</option>
+              <option value="price-desc">Price: high to low</option>
+              <option value="experience">Experience</option>
+              <option value="availability">Earliest availability</option>
+            </select>
+          </label>
+          <div className="flex items-end gap-3 sm:col-span-2 lg:col-span-2">
+            <button disabled={loading} className="button flex-1">
+              {loading ? "Updating…" : "Apply filters"}
+            </button>
+            <Link href="/trainers" className="nav-pill text-center">
+              Clear all filters
+            </Link>
+          </div>
         </form>
         <Notice error={error} />
         {loading ? (
-          <Empty>Loading trainers…</Empty>
+          <Empty>Loading verified trainers…</Empty>
         ) : data?.trainers.length ? (
           <>
-            <p className="text-sm text-slate-500 mb-4">
-              {data.trainers.length} verified trainers
+            <p aria-live="polite" className="mb-4 text-sm text-slate-500">
+              {data.trainers.length} verified trainer
+              {data.trainers.length === 1 ? "" : "s"}
             </p>
-            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {data.trainers.map((t) => (
-                <article key={t.id} className="panel flex flex-col gap-4">
-                  <div className="flex justify-between gap-3 items-center">
-                    <div className="w-14 h-14 bg-emerald-100 text-emerald-800 rounded-2xl flex items-center justify-center text-xl font-bold">
-                      {t.firstName[0]}
-                      {t.lastName[0]}
-                    </div>
+            <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+              {data.trainers.map((trainer) => (
+                <article key={trainer.id} className="panel flex flex-col gap-4">
+                  <div className="flex items-center justify-between gap-3">
+                    {trainer.avatarUrl ? (
+                      <Image
+                        src={trainer.avatarUrl}
+                        alt={`${trainer.firstName} ${trainer.lastName}`}
+                        width={64}
+                        height={64}
+                        unoptimized
+                        className="h-16 w-16 rounded-2xl object-cover"
+                      />
+                    ) : (
+                      <div
+                        aria-label={`${trainer.firstName} ${trainer.lastName} profile placeholder`}
+                        className="flex h-16 w-16 items-center justify-center rounded-2xl bg-emerald-100 text-xl font-bold text-emerald-800"
+                      >
+                        {trainer.firstName[0]}
+                        {trainer.lastName[0]}
+                      </div>
+                    )}
                     <span className="badge">✓ VERIFIED</span>
                   </div>
                   <div>
                     <h2 className="text-xl font-bold">
-                      {t.firstName} {t.lastName}
+                      {trainer.firstName} {trainer.lastName}
                     </h2>
-                    <p className="text-sm text-slate-500 mt-1">
-                      {t.homeLocationName} · {t.yearsExperience} years
-                      experience
+                    <p className="mt-1 text-sm text-slate-500">
+                      {trainer.homeLocationName} · {trainer.yearsExperience}{" "}
+                      years experience
                     </p>
                   </div>
-                  <p className="text-sm text-slate-600 line-clamp-3">
-                    {t.bio || "Meet your next personal trainer."}
+                  <p className="line-clamp-3 text-sm text-slate-600">
+                    {trainer.bio || "Meet your next personal trainer."}
                   </p>
                   <div className="flex flex-wrap gap-2">
-                    {t.specializations.map((s) => (
-                      <span className="badge" key={s}>
-                        {s}
+                    {trainer.specializations.map((value) => (
+                      <span className="badge" key={value}>
+                        {value}
                       </span>
                     ))}
                   </div>
-                  <p className="text-sm">
-                    {t.ratingCount
-                      ? `★ ${t.ratingAvg} (${t.ratingCount} reviews)`
-                      : "New to Trainrr"}{" "}
-                    · {t.availableSlotsCount} available slots
+                  <p className="text-sm text-slate-600">
+                    {trainer.acceptedSessionModes
+                      .map((value) => value.replaceAll("_", " ").toLowerCase())
+                      .join(" · ") || "Methods available on request"}
                   </p>
-                  <div className="border-t pt-4 mt-auto flex justify-between gap-4 items-center">
+                  <p className="text-sm">
+                    {trainer.ratingCount
+                      ? `★ ${trainer.ratingAvg} (${trainer.ratingCount} reviews)`
+                      : "New to Trainrr"}
+                  </p>
+                  <p className="text-sm font-medium text-emerald-800">
+                    {trainer.nextAvailableAt
+                      ? `Next: ${new Intl.DateTimeFormat("en-IN", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Kolkata" }).format(new Date(trainer.nextAvailableAt))}`
+                      : "No future availability published"}
+                  </p>
+                  <div className="mt-auto flex items-center justify-between gap-4 border-t pt-4">
                     <strong>
-                      {money(t.hourlyRate)}
-                      <span className="font-normal text-xs text-slate-500">
+                      {money(trainer.hourlyRate)}
+                      <span className="text-xs font-normal text-slate-500">
                         {" "}
                         / hour
                       </span>
                     </strong>
-                    <Link href={`/trainers/${t.slug}`} className="button">
-                      View profile
+                    <Link href={`/trainers/${trainer.slug}`} className="button">
+                      View profile & book
                     </Link>
                   </div>
                 </article>
               ))}
             </div>
           </>
-        ) : (
-          !error && (
-            <Empty>
-              No trainers match these filters. Try another location or date.
-            </Empty>
-          )
-        )}
+        ) : !error ? (
+          <Empty>
+            <h2 className="mb-2 text-lg font-bold text-slate-800">
+              No published trainers match these filters
+            </h2>
+            <p className="mb-4">
+              Try clearing a location, date, or specialization. New trainers
+              appear only after their credentials are reviewed.
+            </p>
+            <div className="flex flex-wrap justify-center gap-3">
+              <Link href="/trainers" className="button">
+                Clear all filters
+              </Link>
+              <Link href="/contact" className="nav-pill">
+                Ask about a trainer
+              </Link>
+            </div>
+          </Empty>
+        ) : null}
       </main>
     </>
+  );
+}
+
+export default function Page() {
+  return (
+    <Suspense fallback={<Empty>Loading trainer search…</Empty>}>
+      <TrainerDirectory />
+    </Suspense>
   );
 }

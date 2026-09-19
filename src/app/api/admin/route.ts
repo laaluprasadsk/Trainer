@@ -92,6 +92,7 @@ export const POST = api(async (req) => {
         where: { id: target.trainerProfile.id },
         data: {
           verificationStatus: action === "APPROVE" ? "APPROVED" : "REJECTED",
+          isPublished: action === "APPROVE",
         },
       });
       await tx.certification.updateMany({

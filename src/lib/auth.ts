@@ -10,6 +10,19 @@ import { prisma } from "./prisma";
 import { assert, HttpError } from "./http";
 export const digest = (s: string) =>
   createHash("sha256").update(s).digest("hex");
+export const normalizeEmail = (value: string) => value.trim().toLowerCase();
+export function normalizePhone(value: string) {
+  const trimmed = value.trim();
+  assert(
+    /^(?:\+|00)?[0-9][0-9\s().-]*$/.test(trimmed),
+    "Enter a valid international phone number.",
+  );
+  const international = trimmed.startsWith("00")
+    ? `+${trimmed.slice(2)}`
+    : trimmed;
+  const digits = international.replace(/\D/g, "");
+  return `+${digits}`;
+}
 export function hashPassword(password: string) {
   assert(
     password.length >= 12 && password.length <= 128,

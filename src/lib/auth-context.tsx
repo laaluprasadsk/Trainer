@@ -1,6 +1,7 @@
 "use client";
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useState,
@@ -28,23 +29,37 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [isLoading, setLoading] = useState(true);
   const router = useRouter();
+  const refreshIdentity = useCallback(
+    () =>
+      fetch("/api/auth/me")
+        .then((response) => response.json())
+        .then((data) => setUser(data.user || null))
+        .catch(() => setUser(null)),
+    [],
+  );
   useEffect(() => {
-    fetch("/api/auth/me")
-      .then((r) => r.json())
-      .then((d) => setUser(d.user || null))
-      .catch(() => setUser(null))
-      .finally(() => setLoading(false));
-  }, []);
+    refreshIdentity().finally(() => setLoading(false));
+    const sync = (event: StorageEvent) => {
+      if (event.key !== "trainrr-auth-event") return;
+      refreshIdentity().then(() => router.refresh());
+    };
+    window.addEventListener("storage", sync);
+    return () => window.removeEventListener("storage", sync);
+  }, [refreshIdentity, router]);
   return (
     <Context.Provider
       value={{
         user,
         isLoading,
-        login: setUser,
+        login: (nextUser) => {
+          setUser(nextUser);
+          localStorage.setItem("trainrr-auth-event", String(Date.now()));
+        },
         logout: async () => {
           const r = await fetch("/api/auth/logout", { method: "POST" });
           if (r.ok) {
             setUser(null);
+            localStorage.setItem("trainrr-auth-event", String(Date.now()));
             router.push("/login");
             router.refresh();
           }

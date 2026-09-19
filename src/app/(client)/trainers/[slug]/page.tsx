@@ -1,5 +1,6 @@
 import { currentUser } from "@/lib/auth";
 import Image from "next/image";
+import Link from "next/link";
 import { availableSlots } from "@/lib/bookings";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
@@ -25,7 +26,12 @@ export default async function TrainerProfilePage({
 }) {
   const { slug } = await params;
   const trainer = await prisma.trainerProfile.findFirst({
-    where: { slug, verificationStatus: "APPROVED", user: { status: "ACTIVE" } },
+    where: {
+      slug,
+      verificationStatus: "APPROVED",
+      isPublished: true,
+      user: { status: "ACTIVE" },
+    },
     include: {
       certifications: { where: { status: "APPROVED" } },
       reviews: { take: 20, orderBy: { createdAt: "desc" } },
@@ -33,6 +39,9 @@ export default async function TrainerProfilePage({
   });
   if (!trainer) notFound();
   const viewer = await currentUser();
+  const settings = await prisma.platformSettings.findUnique({
+    where: { id: "platform" },
+  });
   const bookableSlots = (
     await availableSlots(trainer.id, viewer?.clientProfile?.id)
   ).map((s) => ({
@@ -148,31 +157,67 @@ export default async function TrainerProfilePage({
                 Certifications
               </h2>
               <div className="space-y-3">
-                {trainer.certifications.map((cert) => (
-                  <div
-                    key={cert.id}
-                    className="flex items-center justify-between p-3.5 bg-gray-50 border border-gray-200 rounded-xl"
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center font-bold">
-                        <CheckCircle2 className="w-5 h-5" />
-                      </div>
-                      <div>
-                        <div className="text-sm font-bold text-gray-900">
-                          {cert.title}
+                {trainer.certifications.length ? (
+                  trainer.certifications.map((cert) => (
+                    <div
+                      key={cert.id}
+                      className="flex items-center justify-between p-3.5 bg-gray-50 border border-gray-200 rounded-xl"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center font-bold">
+                          <CheckCircle2 className="w-5 h-5" />
                         </div>
-                        <div className="text-xs text-gray-500">
-                          {cert.issuingOrganization}
+                        <div>
+                          <div className="text-sm font-bold text-gray-900">
+                            {cert.title}
+                          </div>
+                          <div className="text-xs text-gray-500">
+                            {cert.issuingOrganization}
+                          </div>
                         </div>
                       </div>
+                      <span className="text-[11px] font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded">
+                        Credential reviewed
+                      </span>
                     </div>
-                    <span className="text-[11px] font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded">
-                      Credential reviewed
-                    </span>
-                  </div>
-                ))}
+                  ))
+                ) : (
+                  <p className="text-sm text-slate-500">
+                    No public certification summary is available.
+                  </p>
+                )}
               </div>
             </div>
+
+            <section className="panel grid gap-4 sm:grid-cols-2">
+              <div>
+                <h2 className="font-bold">Training methods</h2>
+                <p className="mt-2 text-sm text-slate-600">
+                  {trainer.acceptedSessionModes
+                    .map((mode) => mode.replaceAll("_", " "))
+                    .join(" · ")}
+                </p>
+              </div>
+              <div>
+                <h2 className="font-bold">Service area</h2>
+                <p className="mt-2 text-sm text-slate-600">
+                  {trainer.homeLocationName} · up to{" "}
+                  {Number(trainer.serviceRadiusKm)} km
+                </p>
+              </div>
+              <div>
+                <h2 className="font-bold">Typical session</h2>
+                <p className="mt-2 text-sm text-slate-600">
+                  Published slot duration · see each available time
+                </p>
+              </div>
+              <div>
+                <h2 className="font-bold">Timezone</h2>
+                <p className="mt-2 text-sm text-slate-600">
+                  Asia/Kolkata (IST)
+                </p>
+              </div>
+            </section>
 
             <section className="panel">
               <h2 className="text-lg font-bold mb-4">Client reviews</h2>
@@ -194,7 +239,10 @@ export default async function TrainerProfilePage({
               <p className="text-xs text-emerald-100 leading-relaxed">
                 Bookings are confirmed after payment verification. Clients may
                 cancel at least 24 hours before the session. Refund requests are
-                reviewed by the platform. All times are Asia/Kolkata.
+                reviewed by the platform. All times are Asia/Kolkata.{" "}
+                <Link className="underline" href="/cancellation-refunds">
+                  Read the cancellation and refund policy.
+                </Link>
               </p>
             </div>
           </div>
@@ -205,6 +253,7 @@ export default async function TrainerProfilePage({
               modes={trainer.acceptedSessionModes}
               trainerName={trainer.firstName + " " + trainer.lastName}
               hourlyRate={Number(trainer.hourlyRate)}
+              commissionBps={settings?.commissionBps ?? 1500}
               slots={bookableSlots}
             />
           </div>

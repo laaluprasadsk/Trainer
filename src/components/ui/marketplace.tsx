@@ -23,6 +23,7 @@ export function useResource<T>(url: string) {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const reload = useCallback(async () => {
+    setLoading(true);
     try {
       const d = await request<T>(url);
       setData(d);
@@ -35,6 +36,7 @@ export function useResource<T>(url: string) {
   }, [url]);
   useEffect(() => {
     const controller = new AbortController();
+    queueMicrotask(() => setLoading(true));
     request<T>(url)
       .then((d) => {
         if (!controller.signal.aborted) {
@@ -51,7 +53,7 @@ export function useResource<T>(url: string) {
       });
     return () => controller.abort();
   }, [url]);
-  return { data, error, loading, reload };
+  return { data, error, loading, reload, setData };
 }
 export function Notice({
   error,

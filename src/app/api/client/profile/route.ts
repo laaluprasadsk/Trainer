@@ -1,6 +1,7 @@
 import { api, body, assert, text } from "@/lib/http";
 import { requireUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { normalizePhone } from "@/lib/auth";
 export const GET = api(async () => {
   const u = await requireUser("CLIENT");
   return {
@@ -18,15 +19,25 @@ export const POST = api(async (req) => {
     160,
     false,
   );
-  assert(
-    Array.isArray(b.fitnessGoals) &&
-      b.fitnessGoals.length <= 12 &&
-      b.fitnessGoals.every((v) => typeof v === "string" && v.length <= 100),
-    "Invalid fitness goals.",
+  assert(Array.isArray(b.fitnessGoals), "Invalid fitness goals.");
+  const fitnessGoals = b.fitnessGoals.map((value) =>
+    text(value, "Fitness goal", 100),
   );
-  const phone = text(b.phone, "Phone", 20);
-  assert(/^\+?[0-9]{8,15}$/.test(phone), "Invalid phone number.");
-  await prisma.$transaction([
+  assert(fitnessGoals.length <= 12, "Add no more than 12 fitness goals.");
+  const phone = normalizePhone(text(b.phone, "Phone", 30));
+  assert(
+    /^\+[0-9]{8,15}$/.test(phone),
+    "Enter a valid international phone number.",
+  );
+  const phoneOwner = await prisma.user.findUnique({
+    where: { phoneNumber: phone },
+  });
+  assert(
+    !phoneOwner || phoneOwner.id === u.id,
+    "This phone number is already connected to another account.",
+    409,
+  );
+  const [, profile] = await prisma.$transaction([
     prisma.user.update({
       where: { id: u.id },
       data: {
@@ -40,9 +51,11 @@ export const POST = api(async (req) => {
         firstName,
         lastName,
         defaultLocationName,
-        fitnessGoals: b.fitnessGoals as string[],
+        fitnessGoals,
       },
     }),
   ]);
-  return {};
+  return {
+    profile: { ...profile, email: u.email, phone },
+  };
 }, true);

@@ -19,7 +19,7 @@ type Booking = {
   createdAt: string;
   expiresAt: string | null;
   slot: { slotDate: string; startTime: string; endTime: string };
-  trainer: { firstName: string; lastName: string; slug: string };
+  trainer: { id: string; firstName: string; lastName: string; slug: string };
   client: { firstName: string; lastName: string };
   payment: null | {
     status: string;
@@ -34,7 +34,13 @@ export function BookingDashboard({ trainer = false }: { trainer?: boolean }) {
     overview: Record<string, string | number>;
   }>("/api/bookings");
   const notifications = useResource<{
-    notifications: { id: string; message: string; read: boolean }[];
+    notifications: {
+      id: string;
+      message: string;
+      href: string | null;
+      read: boolean;
+      createdAt: string;
+    }[];
   }>("/api/notifications");
   const [tab, setTab] = useState("Upcoming");
   const [message, setMessage] = useState("");
@@ -42,6 +48,11 @@ export function BookingDashboard({ trainer = false }: { trainer?: boolean }) {
   const [busy, setBusy] = useState("");
   const [cancel, setCancel] = useState("");
   const [review, setReview] = useState("");
+  const [reschedule, setReschedule] = useState("");
+  const [replacement, setReplacement] = useState("");
+  const [replacementSlots, setReplacementSlots] = useState<
+    { id: string; date: string; startTime: string; endTime: string }[]
+  >([]);
   const rows = data?.bookings || [];
   const cancelled = (b: Booking) =>
     b.status.startsWith("CANCELLED") ||
@@ -57,19 +68,61 @@ export function BookingDashboard({ trainer = false }: { trainer?: boolean }) {
           ? cancelled(b)
           : !cancelled(b) && b.status !== "COMPLETED",
   );
-  async function action(id: string, action: string) {
+  async function action(id: string, action: string, details?: object) {
     setBusy(id);
     setActionError("");
     try {
-      await request("/api/bookings", "PATCH", { id, action });
+      await request("/api/bookings", "PATCH", { id, action, ...details });
       setMessage(
-        action === "COMPLETE" ? "Session completed." : "Booking cancelled.",
+        action === "COMPLETE"
+          ? "Session completed."
+          : action === "RESCHEDULE"
+            ? "Booking rescheduled."
+            : "Booking cancelled.",
       );
       setCancel("");
+      setReschedule("");
+      setReplacement("");
       await reload();
       await notifications.reload();
     } catch (e) {
       setActionError(e instanceof Error ? e.message : "Unable to update.");
+    } finally {
+      setBusy("");
+    }
+  }
+  async function openReschedule(booking: Booking) {
+    setBusy(booking.id);
+    setActionError("");
+    try {
+      const result = await request<{
+        slots: {
+          id: string;
+          date: string;
+          startTime: string;
+          endTime: string;
+        }[];
+      }>(
+        `/api/trainers/availability?trainerId=${encodeURIComponent(booking.trainer.id)}`,
+      );
+      const duration = (time: string) =>
+        Number(time.slice(0, 2)) * 60 + Number(time.slice(3, 5));
+      const currentDuration =
+        duration(booking.slot.endTime) - duration(booking.slot.startTime);
+      setReplacementSlots(
+        result.slots.filter(
+          (slot) =>
+            duration(slot.endTime) - duration(slot.startTime) ===
+            currentDuration,
+        ),
+      );
+      setReschedule(booking.id);
+    } catch (error) {
+      setActionError(
+        error instanceof Error
+          ? error.message
+          : "Unable to load replacement times.",
+      );
     } finally {
       setBusy("");
     }
@@ -89,6 +142,30 @@ export function BookingDashboard({ trainer = false }: { trainer?: boolean }) {
       setActionError(e instanceof Error ? e.message : "Unable to submit.");
     } finally {
       setBusy("");
+    }
+  }
+  async function markNotificationsRead(id?: string) {
+    const previous = notifications.data;
+    notifications.setData((current) =>
+      current
+        ? {
+            notifications: current.notifications.map((notification) =>
+              !id || notification.id === id
+                ? { ...notification, read: true }
+                : notification,
+            ),
+          }
+        : current,
+    );
+    try {
+      await request("/api/notifications", "PATCH", id ? { id } : {});
+    } catch (error) {
+      notifications.setData(previous);
+      setActionError(
+        error instanceof Error
+          ? error.message
+          : "Unable to update notifications.",
+      );
     }
   }
   return (
@@ -163,6 +240,14 @@ export function BookingDashboard({ trainer = false }: { trainer?: boolean }) {
                   <p className="text-xs text-slate-500 break-all mt-2">
                     Booking {b.id}
                   </p>
+                  {!trainer && (
+                    <Link
+                      className="mt-2 inline-block text-sm text-emerald-700 underline"
+                      href={`/bookings/${b.id}`}
+                    >
+                      View booking details
+                    </Link>
+                  )}
                   <p className="text-xs text-slate-500 break-all mt-2">
                     Payment:{" "}
                     {b.payment?.status.replaceAll("_", " ") || "Not initiated"}
@@ -188,6 +273,15 @@ export function BookingDashboard({ trainer = false }: { trainer?: boolean }) {
                       onClick={() => action(b.id, "COMPLETE")}
                     >
                       Mark completed
+                    </button>
+                  )}
+                  {!trainer && b.status === "CONFIRMED" && (
+                    <button
+                      disabled={busy === b.id}
+                      className="nav-pill"
+                      onClick={() => openReschedule(b)}
+                    >
+                      Reschedule
                     </button>
                   )}
                   {!trainer && b.status === "COMPLETED" && !b.review && (
@@ -250,27 +344,76 @@ export function BookingDashboard({ trainer = false }: { trainer?: boolean }) {
                   </button>
                 </form>
               )}
+              {reschedule === b.id && (
+                <div className="mt-5 border-t pt-4">
+                  <p className="mb-3 text-sm">
+                    Choose another available time of the same duration.
+                    Rescheduling requires at least 24 hours notice.
+                  </p>
+                  {replacementSlots.length ? (
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      {replacementSlots.map((slot) => (
+                        <button
+                          key={slot.id}
+                          className={
+                            replacement === slot.id ? "button" : "nav-pill"
+                          }
+                          aria-pressed={replacement === slot.id}
+                          onClick={() => setReplacement(slot.id)}
+                        >
+                          {slot.date} · {slot.startTime}–{slot.endTime}
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-slate-500">
+                      No replacement times of the same duration are available.
+                    </p>
+                  )}
+                  <div className="mt-4 flex gap-2">
+                    <button
+                      className="button"
+                      disabled={!replacement || busy === b.id}
+                      onClick={() =>
+                        action(b.id, "RESCHEDULE", { slotId: replacement })
+                      }
+                    >
+                      Confirm new time
+                    </button>
+                    <button
+                      className="nav-pill"
+                      onClick={() => setReschedule("")}
+                    >
+                      Keep current time
+                    </button>
+                  </div>
+                </div>
+              )}
             </article>
           ))}
         </div>
       )}
       <section className="panel mt-8">
         <div className="flex justify-between gap-3">
-          <h2 className="text-xl font-bold">Notifications</h2>
+          <h2 className="text-xl font-bold">
+            Notifications
+            {!!notifications.data?.notifications.filter((item) => !item.read)
+              .length && (
+              <span className="badge ml-2">
+                {
+                  notifications.data.notifications.filter((item) => !item.read)
+                    .length
+                }{" "}
+                unread
+              </span>
+            )}
+          </h2>
           <button
             className="text-sm text-emerald-700"
-            onClick={async () => {
-              try {
-                await request("/api/notifications", "PATCH");
-                await notifications.reload();
-              } catch (e) {
-                setActionError(
-                  e instanceof Error
-                    ? e.message
-                    : "Unable to update notifications.",
-                );
-              }
-            }}
+            disabled={
+              !notifications.data?.notifications.some((item) => !item.read)
+            }
+            onClick={() => markNotificationsRead()}
           >
             Mark all read
           </button>
@@ -278,12 +421,29 @@ export function BookingDashboard({ trainer = false }: { trainer?: boolean }) {
         <Notice error={notifications.error} />
         {notifications.data?.notifications.length ? (
           notifications.data.notifications.map((n) => (
-            <p
+            <div
               key={n.id}
-              className={`py-3 border-b last:border-0 text-sm ${n.read ? "text-slate-500" : "font-semibold"}`}
+              className={`flex flex-col gap-1 border-b py-3 text-sm last:border-0 sm:flex-row sm:items-center sm:justify-between ${n.read ? "text-slate-500" : "font-semibold"}`}
             >
-              {n.message}
-            </p>
+              <div>
+                {n.href ? <Link href={n.href}>{n.message}</Link> : n.message}
+                <p className="mt-1 text-xs font-normal text-slate-400">
+                  {new Intl.DateTimeFormat("en-IN", {
+                    dateStyle: "medium",
+                    timeStyle: "short",
+                    timeZone: "Asia/Kolkata",
+                  }).format(new Date(n.createdAt))}
+                </p>
+              </div>
+              {!n.read && (
+                <button
+                  className="text-left text-xs text-emerald-700"
+                  onClick={() => markNotificationsRead(n.id)}
+                >
+                  Mark as read
+                </button>
+              )}
+            </div>
           ))
         ) : (
           <p className="text-sm text-slate-500 mt-4">You are all caught up.</p>

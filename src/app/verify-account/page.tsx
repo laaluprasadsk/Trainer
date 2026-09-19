@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Shell,
   Notice,
@@ -17,12 +17,15 @@ export default function VerificationPage() {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [failure, setFailure] = useState("");
-  async function act(action: string) {
+  const attemptedEmailToken = useRef(false);
+  async function act(action: string, suppliedToken?: string) {
     setBusy(true);
     setFailure("");
     setMessage("");
     try {
-      const token = new URLSearchParams(window.location.search).get("token");
+      const token =
+        suppliedToken ??
+        new URLSearchParams(window.location.search).get("token");
       const r = await request<{ message: string }>(
         "/api/account/verification",
         "POST",
@@ -38,6 +41,15 @@ export default function VerificationPage() {
       setBusy(false);
     }
   }
+  useEffect(() => {
+    const token = new URLSearchParams(window.location.search).get("token");
+    if (!token || attemptedEmailToken.current) return;
+    attemptedEmailToken.current = true;
+    void act("VERIFY_EMAIL", token);
+    // The link token is consumed once. Re-running on render would show a false
+    // already-used error, so this effect intentionally runs once on mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   return (
     <Shell
       title="Verify your account"
@@ -58,13 +70,6 @@ export default function VerificationPage() {
                   onClick={() => act("SEND_EMAIL")}
                 >
                   Send verification email
-                </button>
-                <button
-                  className="rounded-lg border p-3"
-                  disabled={busy}
-                  onClick={() => act("VERIFY_EMAIL")}
-                >
-                  Confirm email from link
                 </button>
               </div>
             )}
@@ -89,7 +94,8 @@ export default function VerificationPage() {
                     autoComplete="one-time-code"
                     maxLength={6}
                     value={otp}
-                    onChange={(e) => setOtp(e.target.value)}
+                    pattern="[0-9]{6}"
+                    onChange={(e) => setOtp(e.target.value.replace(/\D/g, ""))}
                   />
                 </label>
                 <button

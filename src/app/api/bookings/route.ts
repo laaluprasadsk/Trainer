@@ -16,7 +16,9 @@ export const GET = api(async () => {
       slot: true,
       payment: true,
       review: true,
-      trainer: { select: { firstName: true, lastName: true, slug: true } },
+      trainer: {
+        select: { id: true, firstName: true, lastName: true, slug: true },
+      },
       client: { select: { firstName: true, lastName: true } },
     },
     orderBy: { createdAt: "desc" },
@@ -82,5 +84,11 @@ export const GET = api(async () => {
 export const PATCH = api(async (req) => {
   const u = await requireUser();
   const b = await body(req);
-  return changeBooking(u, text(b.id, "Booking"), text(b.action, "Action"));
+  const action = text(b.action, "Action");
+  return changeBooking(
+    u,
+    text(b.id, "Booking"),
+    action,
+    action === "RESCHEDULE" ? text(b.slotId, "Replacement slot") : undefined,
+  );
 }, true);

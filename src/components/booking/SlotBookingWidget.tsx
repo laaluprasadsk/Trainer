@@ -1,6 +1,7 @@
 "use client";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { useAuth } from "@/lib/auth-context";
 import { money, Notice, request } from "../ui/marketplace";
 import { pricing } from "@/lib/booking-domain";
@@ -13,9 +14,19 @@ type Options = {
   handler: (r: Record<string, string>) => void;
   modal: { ondismiss: () => void };
 };
+type PaymentFailure = {
+  error?: { description?: string };
+};
+type RazorpayCheckout = {
+  open: () => void;
+  on: (
+    event: "payment.failed",
+    handler: (response: PaymentFailure) => void,
+  ) => void;
+};
 declare global {
   interface Window {
-    Razorpay: new (options: Options) => { open: () => void };
+    Razorpay: new (options: Options) => RazorpayCheckout;
   }
 }
 export function SlotBookingWidget({
@@ -23,12 +34,14 @@ export function SlotBookingWidget({
   hourlyRate,
   slots,
   modes,
+  commissionBps,
 }: {
   trainerId: string;
   trainerName: string;
   hourlyRate: number;
   slots: { id: string; date: string; startTime: string; endTime: string }[];
   modes: string[];
+  commissionBps: number;
 }) {
   const dates = [...new Set(slots.map((s) => s.date))];
   const [date, setDate] = useState(dates[0] || "");
@@ -41,6 +54,15 @@ export function SlotBookingWidget({
   const { user, isLoading } = useAuth();
   const router = useRouter();
   const slot = slots.find((s) => s.id === selected);
+  const quote = slot
+    ? pricing(hourlyRate, slot.startTime, slot.endTime, commissionBps)
+    : null;
+  const durationMinutes = slot
+    ? Number(slot.endTime.slice(0, 2)) * 60 +
+      Number(slot.endTime.slice(3, 5)) -
+      (Number(slot.startTime.slice(0, 2)) * 60 +
+        Number(slot.startTime.slice(3, 5)))
+    : 0;
   async function checkout() {
     if (!user) {
       router.push("/login");
@@ -50,6 +72,7 @@ export function SlotBookingWidget({
     setError("");
     try {
       const order = await request<{
+        bookingId: string;
         key: string;
         orderId: string;
         amount: number;
@@ -72,7 +95,7 @@ export function SlotBookingWidget({
             );
           document.body.appendChild(script);
         });
-      new window.Razorpay({
+      const razorpay = new window.Razorpay({
         key: order.key,
         order_id: order.orderId,
         amount: order.amount,
@@ -98,7 +121,9 @@ export function SlotBookingWidget({
                 ? "Your session is confirmed. View it in My dashboard."
                 : "Payment received; your booking needs refund review. See your dashboard.",
             );
-            router.refresh();
+            if (data.booking.status === "CONFIRMED")
+              router.push(`/bookings/${order.bookingId}?confirmed=1`);
+            else router.push(`/bookings/${order.bookingId}`);
           } catch (e) {
             setError(
               e instanceof Error
@@ -109,7 +134,16 @@ export function SlotBookingWidget({
             setBusy(false);
           }
         },
-      }).open();
+      });
+      razorpay.on("payment.failed", (response) => {
+        setBusy(false);
+        setMessage("");
+        setError(
+          response.error?.description ||
+            "Payment failed. Retry before your reservation expires.",
+        );
+      });
+      razorpay.open();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Checkout failed.");
       setBusy(false);
@@ -178,19 +212,38 @@ export function SlotBookingWidget({
             </label>
           )}
           <div className="border-t pt-4 flex justify-between font-bold">
-            <span>Session total</span>
-            <span>
-              {slot
-                ? money(
-                    pricing(hourlyRate, slot.startTime, slot.endTime)
-                      .totalAmount,
-                  )
-                : "Select a slot"}
-            </span>
+            <span>Final total</span>
+            <span>{quote ? money(quote.totalAmount) : "Select a slot"}</span>
           </div>
+          {slot && quote && (
+            <dl className="grid grid-cols-2 gap-2 text-sm text-slate-600">
+              <dt>Date and time</dt>
+              <dd className="text-right">
+                {slot.date}, {slot.startTime}–{slot.endTime} IST
+              </dd>
+              <dt>Duration</dt>
+              <dd className="text-right">{durationMinutes} minutes</dd>
+              <dt>Method / venue</dt>
+              <dd className="text-right">{mode.replaceAll("_", " ")}</dd>
+              <dt>Trainer session price</dt>
+              <dd className="text-right">{money(quote.totalAmount)}</dd>
+              <dt>Platform fee component</dt>
+              <dd className="text-right">
+                {money(quote.platformFee)} included
+              </dd>
+              <dt>Discount</dt>
+              <dd className="text-right">{money(0)}</dd>
+              <dt>Tax</dt>
+              <dd className="text-right">No separate charge</dd>
+            </dl>
+          )}
           <p className="text-xs text-slate-500">
             Price includes the platform commission. A reservation lasts 10
-            minutes. Cancellation requires 24 hours notice.
+            minutes. Cancellation requires 24 hours notice. Read the{" "}
+            <Link className="underline" href="/cancellation-refunds">
+              cancellation and refund policy
+            </Link>
+            .
           </p>
           <button
             disabled={busy || isLoading || !selected || !mode}

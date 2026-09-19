@@ -1,10 +1,19 @@
 import { SessionLocationType } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireUser, rateLimit } from "@/lib/auth";
-import { api, assert, body, text } from "@/lib/http";
+import { api, assert, body, HttpError, text } from "@/lib/http";
 import { activeWhere, expireHolds, trainerLock } from "@/lib/bookings";
 import { pricing, slotInstant } from "@/lib/booking-domain";
 import { gateway } from "@/lib/payments";
+
+function getProviderStatus(error: unknown) {
+  if (!error || typeof error !== "object") return undefined;
+
+  const candidate = error as { statusCode?: unknown; status?: unknown };
+  const status = Number(candidate.statusCode ?? candidate.status);
+  return Number.isInteger(status) ? status : undefined;
+}
+
 export const POST = api(async (req) => {
   const u = await requireUser("CLIENT");
   assert(
@@ -103,19 +112,36 @@ export const POST = api(async (req) => {
       include: { payment: true },
     });
   });
+  const amount = Math.round(Number(booking.totalAmount) * 100);
+  assert(
+    Number.isSafeInteger(amount) && amount >= 100,
+    "The booking total must be at least ₹1.00.",
+  );
   if (booking.payment)
     return {
       bookingId: booking.id,
       orderId: booking.payment.gatewayOrderId,
-      amount: Math.round(Number(booking.totalAmount) * 100),
+      amount,
       currency: booking.currency,
       key: process.env.RAZORPAY_KEY_ID,
     };
-  const order = await provider.orders.create({
-    amount: Math.round(Number(booking.totalAmount) * 100),
-    currency: booking.currency,
-    receipt: booking.id,
-  });
+  let order;
+  try {
+    order = await provider.orders.create({
+      amount,
+      currency: booking.currency,
+      receipt: booking.id,
+    });
+  } catch (error) {
+    if (getProviderStatus(error) === 401) {
+      throw new HttpError(401, "Payment service authentication failed.");
+    }
+
+    throw new HttpError(
+      500,
+      "Unable to create the payment order. Please try again.",
+    );
+  }
   await prisma.payment.create({
     data: {
       bookingId: booking.id,

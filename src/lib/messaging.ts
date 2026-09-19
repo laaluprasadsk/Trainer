@@ -9,7 +9,7 @@ export async function sendEmail(
 ) {
   assert(
     process.env.RESEND_API_KEY && process.env.EMAIL_FROM,
-    "Email delivery is not configured.",
+    "Email service is temporarily unavailable. Please try again later.",
     503,
   );
   const escape = (v: string) =>
@@ -42,7 +42,7 @@ export async function sendEmail(
   });
   assert(
     response.ok,
-    `Email provider rejected the request (${response.status}).`,
+    "We could not send this email. Please try again shortly.",
     503,
   );
   const result = await response.json();
@@ -57,7 +57,7 @@ export async function sendEmail(
 export function smsConfigured() {
   assert(
     process.env.MSG91_AUTH_KEY,
-    "Phone verification is not configured.",
+    "Phone verification is temporarily unavailable. Please try again later.",
     503,
   );
   return process.env.MSG91_AUTH_KEY;

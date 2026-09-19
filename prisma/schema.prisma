@@ -115,6 +115,7 @@ model TrainerProfile {
   hourlyRate           Decimal               @map("hourly_rate") @db.Decimal(10, 2)
   currency             String                @default("INR")
   verificationStatus   VerificationStatus    @default(UNVERIFIED) @map("verification_status")
+  isPublished           Boolean               @default(false) @map("is_published")
   homeLocationName     String                @map("home_location_name")
   serviceRadiusKm      Decimal               @default(10.0) @map("service_radius_km") @db.Decimal(5, 2)
   ratingAvg            Decimal               @default(0.00) @map("rating_avg") @db.Decimal(3, 2)
@@ -307,6 +308,7 @@ model Notification {
   id        String   @id @default(uuid())
   userId    String   @map("user_id")
   message   String
+  href      String?
   read      Boolean  @default(false)
   createdAt DateTime @default(now()) @map("created_at")
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -366,6 +368,18 @@ model PhoneChallenge {
   expiresAt DateTime @map("expires_at")
   resendAt DateTime @map("resend_at")
   @@map("phone_challenges")
+}
+
+model SupportRequest {
+  id         String   @id @default(uuid())
+  requestKey String   @unique @map("request_key")
+  email      String
+  message    String
+  status     String   @default("OPEN")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([status, createdAt])
+  @@map("support_requests")
 }
 
 model PlatformSettings {

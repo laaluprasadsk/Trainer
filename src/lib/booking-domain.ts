@@ -1,5 +1,13 @@
 // All marketplace wall-clock dates use Asia/Kolkata (UTC+05:30, no DST).
 export const TIME_ZONE = "Asia/Kolkata";
+export function todayInKolkata(now = new Date()) {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(now);
+}
 export function slotInstant(date: Date | string, time: string) {
   return new Date(
     `${typeof date === "string" ? date.slice(0, 10) : date.toISOString().slice(0, 10)}T${time.slice(0, 5)}:00+05:30`,
