@@ -10,6 +10,13 @@ const source = ts.transpileModule(
 const m = new Module("domain");
 m._compile(source, "domain.js");
 const { validWindow, overlaps, pricing, slotInstant } = m.exports;
+const redirectSource = ts.transpileModule(
+  fs.readFileSync("src/lib/safe-redirect.ts", "utf8"),
+  { compilerOptions: { module: ts.ModuleKind.CommonJS } },
+).outputText;
+const redirectModule = new Module("safe-redirect");
+redirectModule._compile(redirectSource, "safe-redirect.js");
+const { safeInternalRedirect } = redirectModule.exports;
 test("IST midnight crosses UTC date correctly", () =>
   assert.equal(
     slotInstant("2030-01-02", "00:15").toISOString(),
@@ -42,4 +49,18 @@ test("pricing prorates duration and conserves paise", () => {
     Math.round((p.platformFee + p.trainerPayout) * 100),
     Math.round(p.totalAmount * 100),
   );
+});
+test("authentication redirects accept only internal Trainrr paths", () => {
+  assert.equal(
+    safeInternalRedirect("/bookings?tab=upcoming"),
+    "/bookings?tab=upcoming",
+  );
+  for (const unsafe of [
+    "https://evil.example",
+    "//evil.example",
+    "/\\evil.example",
+    "/%2f%2fevil.example",
+    "javascript:alert(1)",
+  ])
+    assert.equal(safeInternalRedirect(unsafe), null);
 });

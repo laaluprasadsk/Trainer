@@ -8,9 +8,12 @@ import { join, resolve } from "node:path";
 import { spawn, execFileSync } from "node:child_process";
 import { randomBytes, scryptSync, createHmac, createHash } from "node:crypto";
 import assert from "node:assert/strict";
+import { Webhook } from "standardwebhooks";
 const dir = mkdtempSync(join(tmpdir(), "trainer-e2e-"));
 const password = randomBytes(18).toString("hex");
 const webhookSecret = randomBytes(32).toString("hex");
+const emailTokenSecret = randomBytes(32).toString("hex");
+const emailWebhookSecret = `whsec_${randomBytes(32).toString("base64")}`;
 const pg = new EmbeddedPostgres({
   databaseDir: join(dir, "db"),
   user: "postgres",
@@ -78,6 +81,8 @@ try {
     APP_URL: origin,
     RESEND_API_KEY: "re_test_isolated",
     EMAIL_FROM: "Trainrr Test <test@example.test>",
+    EMAIL_TOKEN_SECRET: emailTokenSecret,
+    RESEND_WEBHOOK_SECRET: emailWebhookSecret,
     SUPPORT_EMAIL: "support@example.test",
     MSG91_AUTH_KEY: "msg91_test_isolated",
     MSG91_OTP_TEMPLATE_ID: "otp_test_template",
@@ -115,6 +120,12 @@ try {
     c2 = await register("CLIENT", 2),
     t1 = await register("TRAINER", 3),
     t2 = await register("TRAINER", 4);
+  check(
+    (await db.emailSend.count({
+      where: { template: "email-verification", status: "SENT" },
+    })) === 4,
+    "registration sends one idempotent verification email per account",
+  );
   const salt = randomBytes(16).toString("hex");
   const admin = await db.user.create({
     data: {
@@ -175,6 +186,51 @@ try {
     ).status === 200,
     "verification email uses mocked delivery",
   );
+  const otpSendExisting = await api("/api/auth/send-otp", {
+    method: "POST",
+    data: { email: "client1@example.test" },
+  });
+  const otpSendMissing = await api("/api/auth/send-otp", {
+    method: "POST",
+    data: { email: "unknown@example.test" },
+  });
+  check(
+    otpSendExisting.status === 200 &&
+      otpSendMissing.status === 200 &&
+      otpSendExisting.json.message === otpSendMissing.json.message,
+    "passwordless code request does not enumerate accounts",
+  );
+  await db.authToken.deleteMany({
+    where: { userId: c1.json.user.id, kind: "EMAIL_LOGIN_OTP" },
+  });
+  const loginOtp = "123456";
+  await db.authToken.create({
+    data: {
+      id: createHmac("sha256", emailTokenSecret)
+        .update(`${c1.json.user.id}:EMAIL_LOGIN_OTP:${loginOtp}`)
+        .digest("hex"),
+      userId: c1.json.user.id,
+      kind: "EMAIL_LOGIN_OTP",
+      expiresAt: new Date(Date.now() + 60000),
+    },
+  });
+  const otpLogin = await api("/api/auth/verify-otp", {
+    method: "POST",
+    data: { email: "client1@example.test", otp: loginOtp },
+  });
+  check(
+    otpLogin.status === 200 && Boolean(otpLogin.cookie),
+    "valid single-use email code creates a database session",
+  );
+  check(
+    (
+      await api("/api/auth/verify-otp", {
+        method: "POST",
+        data: { email: "client1@example.test", otp: loginOtp },
+      })
+    ).status === 400,
+    "email sign-in code cannot be replayed",
+  );
   const verifyToken = randomBytes(32).toString("hex");
   await db.authToken.create({
     data: {
@@ -203,6 +259,185 @@ try {
       })
     ).status === 400,
     "email verification token cannot be replayed",
+  );
+  check(
+    (
+      await api("/api/account/verification", {
+        cookie: c1.cookie,
+        method: "POST",
+        data: { action: "VERIFY_EMAIL", token: "invalid-token" },
+      })
+    ).status === 400,
+    "invalid verification link is rejected",
+  );
+  const expiredVerification = randomBytes(32).toString("hex");
+  await db.authToken.create({
+    data: {
+      id: createHash("sha256").update(expiredVerification).digest("hex"),
+      userId: t2.json.user.id,
+      kind: "VERIFY_EMAIL",
+      expiresAt: new Date(Date.now() - 1000),
+    },
+  });
+  check(
+    (
+      await api("/api/account/verification", {
+        cookie: t2.cookie,
+        method: "POST",
+        data: { action: "VERIFY_EMAIL", token: expiredVerification },
+      })
+    ).status === 400,
+    "expired verification link is rejected",
+  );
+  const trackedEmail = await db.emailSend.findFirstOrThrow({
+    where: { userId: c1.json.user.id, providerEmailId: { not: null } },
+  });
+  const emailEvent = {
+    type: "email.delivered",
+    created_at: new Date().toISOString(),
+    data: { email_id: trackedEmail.providerEmailId },
+  };
+  const emailEventBody = JSON.stringify(emailEvent);
+  const emailEventId = `evt_${randomBytes(12).toString("hex")}`;
+  const emailEventTime = new Date();
+  const emailSignature = new Webhook(emailWebhookSecret).sign(
+    emailEventId,
+    emailEventTime,
+    emailEventBody,
+  );
+  for (let attempt = 0; attempt < 2; attempt++)
+    check(
+      (
+        await api("/api/webhooks/resend", {
+          method: "POST",
+          data: emailEvent,
+          headers: {
+            "svix-id": emailEventId,
+            "svix-timestamp": String(
+              Math.floor(emailEventTime.getTime() / 1000),
+            ),
+            "svix-signature": emailSignature,
+          },
+        })
+      ).status === 200,
+      `signed Resend webhook is idempotent (${attempt + 1})`,
+    );
+  check(
+    (await db.emailEvent.count({
+      where: { providerEventId: emailEventId },
+    })) === 1 &&
+      (await db.emailSend.findUnique({ where: { id: trackedEmail.id } }))
+        .status === "DELIVERED",
+    "Resend delivery event updates one persistent send record",
+  );
+  check(
+    (
+      await api("/api/account/verification", {
+        cookie: t1.cookie,
+        method: "POST",
+        data: { action: "SEND_EMAIL_OTP" },
+      })
+    ).status === 200,
+    "email verification code uses mocked delivery",
+  );
+  const verificationSendCount = await db.emailSend.count({
+    where: { userId: t1.json.user.id, template: "email-verification-otp" },
+  });
+  check(
+    (
+      await api("/api/account/verification", {
+        cookie: t1.cookie,
+        method: "POST",
+        data: { action: "SEND_EMAIL_OTP" },
+      })
+    ).status === 200 &&
+      (await db.emailSend.count({
+        where: { userId: t1.json.user.id, template: "email-verification-otp" },
+      })) === verificationSendCount,
+    "verification-code resend cooldown prevents duplicate mail",
+  );
+  await db.authToken.deleteMany({
+    where: { userId: t1.json.user.id, kind: "VERIFY_EMAIL_OTP" },
+  });
+  const verificationOtp = "654321";
+  await db.authToken.create({
+    data: {
+      id: createHmac("sha256", emailTokenSecret)
+        .update(`${t1.json.user.id}:VERIFY_EMAIL_OTP:${verificationOtp}`)
+        .digest("hex"),
+      userId: t1.json.user.id,
+      kind: "VERIFY_EMAIL_OTP",
+      expiresAt: new Date(Date.now() + 60000),
+    },
+  });
+  check(
+    (
+      await api("/api/account/verification", {
+        cookie: t1.cookie,
+        method: "POST",
+        data: { action: "VERIFY_EMAIL_OTP", otp: verificationOtp },
+      })
+    ).status === 200,
+    "hashed email verification code is consumed once",
+  );
+  await db.authToken.deleteMany({
+    where: { userId: t2.json.user.id, kind: "VERIFY_EMAIL_OTP" },
+  });
+  const attemptCode = "111111";
+  await db.authToken.create({
+    data: {
+      id: createHmac("sha256", emailTokenSecret)
+        .update(`${t2.json.user.id}:VERIFY_EMAIL_OTP:${attemptCode}`)
+        .digest("hex"),
+      userId: t2.json.user.id,
+      kind: "VERIFY_EMAIL_OTP",
+      expiresAt: new Date(Date.now() + 60000),
+    },
+  });
+  for (let attempt = 0; attempt < 5; attempt++)
+    check(
+      (
+        await api("/api/account/verification", {
+          cookie: t2.cookie,
+          method: "POST",
+          data: { action: "VERIFY_EMAIL_OTP", otp: "222222" },
+        })
+      ).status === 400,
+      `incorrect verification code rejected (${attempt + 1})`,
+    );
+  check(
+    (
+      await api("/api/account/verification", {
+        cookie: t2.cookie,
+        method: "POST",
+        data: { action: "VERIFY_EMAIL_OTP", otp: attemptCode },
+      })
+    ).status === 429,
+    "verification code locks after five failed attempts",
+  );
+  await db.authToken.deleteMany({
+    where: { userId: t2.json.user.id, kind: "VERIFY_EMAIL_OTP" },
+  });
+  const expiredOtp = "333333";
+  await db.authToken.create({
+    data: {
+      id: createHmac("sha256", emailTokenSecret)
+        .update(`${t2.json.user.id}:VERIFY_EMAIL_OTP:${expiredOtp}`)
+        .digest("hex"),
+      userId: t2.json.user.id,
+      kind: "VERIFY_EMAIL_OTP",
+      expiresAt: new Date(Date.now() - 1000),
+    },
+  });
+  check(
+    (
+      await api("/api/account/verification", {
+        cookie: t2.cookie,
+        method: "POST",
+        data: { action: "VERIFY_EMAIL_OTP", otp: expiredOtp },
+      })
+    ).status === 400,
+    "expired verification code is rejected",
   );
   check(
     (
@@ -261,6 +496,45 @@ try {
     where: { id: c2.json.user.id },
     data: { emailVerifiedAt: new Date(), phoneVerifiedAt: new Date() },
   });
+  check(
+    (
+      await api("/api/account/email", {
+        cookie: c2.cookie,
+        method: "POST",
+        data: {
+          action: "REQUEST",
+          newEmail: "client2.changed@example.test",
+          currentPassword: password,
+        },
+      })
+    ).status === 200,
+    "email change requires password and sends confirmation",
+  );
+  await db.authToken.deleteMany({
+    where: { userId: c2.json.user.id, kind: "CHANGE_EMAIL" },
+  });
+  const emailChangeToken = randomBytes(32).toString("hex");
+  await db.authToken.create({
+    data: {
+      id: createHash("sha256").update(emailChangeToken).digest("hex"),
+      userId: c2.json.user.id,
+      kind: "CHANGE_EMAIL",
+      payload: "client2.changed@example.test",
+      expiresAt: new Date(Date.now() + 60000),
+    },
+  });
+  const emailChanged = await api("/api/account/email", {
+    cookie: c2.cookie,
+    method: "POST",
+    data: { action: "CONFIRM", token: emailChangeToken },
+  });
+  check(
+    emailChanged.status === 200 &&
+      emailChanged.json.email === "client2.changed@example.test" &&
+      Boolean(emailChanged.cookie),
+    "confirmed email change updates identity and rotates the session",
+  );
+  c2.cookie = emailChanged.cookie;
   const forgotExisting = await api("/api/auth/forgot", {
     method: "POST",
     data: { email: "client1@example.test" },
@@ -274,6 +548,35 @@ try {
       forgotMissing.status === 200 &&
       forgotExisting.json.message === forgotMissing.json.message,
     "password reset request is neutral and uses mocked email delivery",
+  );
+  check(
+    (
+      await api("/api/auth/forgot", {
+        method: "POST",
+        data: { email: "not-an-email" },
+      })
+    ).status === 400,
+    "password reset request rejects invalid email",
+  );
+  // Registration and the duplicate-account check share this per-address bucket.
+  for (let attempt = 0; attempt < 7; attempt++)
+    check(
+      (
+        await api("/api/auth/forgot", {
+          method: "POST",
+          data: { email: "client1@example.test" },
+        })
+      ).status === 200,
+      `repeated reset request stays neutral (${attempt + 1})`,
+    );
+  check(
+    (
+      await api("/api/auth/forgot", {
+        method: "POST",
+        data: { email: "client1@example.test" },
+      })
+    ).status === 429,
+    "password reset requests are rate limited",
   );
   check(
     (
@@ -790,9 +1093,10 @@ try {
   );
   await page.getByLabel("Location").fill("");
   await page.getByRole("button", { name: "Apply filters" }).click();
-  await page.waitForURL((url) =>
-    url.searchParams.get("specialization") === "Yoga" &&
-    !url.searchParams.has("location"),
+  await page.waitForURL(
+    (url) =>
+      url.searchParams.get("specialization") === "Yoga" &&
+      !url.searchParams.has("location"),
   );
   check(
     !new URL(page.url()).searchParams.has("location"),
@@ -811,7 +1115,7 @@ try {
     ]);
   await page.goto(origin + "/schedule");
   const uiDate = new Date(Date.now() + 4 * 86400000).toISOString().slice(0, 10);
-  await page.getByLabel("First date").fill(uiDate);
+  await page.locator('input[name="date"]').first().fill(uiDate);
   await page.getByLabel("From", { exact: true }).fill("12:00");
   await page.getByLabel("Until", { exact: true }).fill("13:00");
   await page.getByRole("button", { name: "Publish slots" }).click();
@@ -1035,6 +1339,63 @@ try {
       await api("/api/auth/reset", {
         method: "POST",
         data: {
+          token: "not-a-valid-reset-token",
+          password: password + "new",
+          confirmPassword: password + "new",
+        },
+      })
+    ).status === 400,
+    "invalid password-reset token is rejected",
+  );
+  check(
+    (
+      await api("/api/auth/reset", {
+        method: "POST",
+        data: {
+          token,
+          password: password + "new",
+          confirmPassword: password + "different",
+        },
+      })
+    ).status === 400,
+    "password reset rejects mismatched confirmation",
+  );
+  check(
+    (
+      await api("/api/auth/reset", {
+        method: "POST",
+        data: { token, password: "short", confirmPassword: "short" },
+      })
+    ).status === 400,
+    "password reset enforces password policy",
+  );
+  const expiredReset = randomBytes(32).toString("hex");
+  await db.authToken.create({
+    data: {
+      id: createHash("sha256").update(expiredReset).digest("hex"),
+      userId: admin.id,
+      kind: "RESET",
+      expiresAt: new Date(Date.now() - 1000),
+    },
+  });
+  check(
+    (
+      await api("/api/auth/reset", {
+        method: "POST",
+        data: {
+          token: expiredReset,
+          password: password + "new",
+          confirmPassword: password + "new",
+        },
+      })
+    ).status === 400,
+    "expired password-reset token is rejected",
+  );
+  check(
+    (
+      await api("/api/auth/reset", {
+        method: "POST",
+        data: {
           token,
           password: password + "new",
           confirmPassword: password + "new",
@@ -1092,9 +1453,7 @@ try {
         waitUntil: "domcontentloaded",
         timeout: 60000,
       });
-      await responsivePage
-        .locator("body")
-        .waitFor({ state: "visible" });
+      await responsivePage.locator("body").waitFor({ state: "visible" });
       check(response?.ok(), `${route} loads at ${width}px`);
       check(
         await responsivePage.evaluate(

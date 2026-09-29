@@ -33,23 +33,29 @@ Remove those three bootstrap variables afterwards. Existing accounts are never s
 
 ## Configuration
 
-| Variable | Purpose |
-|---|---|
-| `DATABASE_URL` | Application PostgreSQL connection; pooler supported |
-| `DIRECT_URL` | Direct PostgreSQL connection for migration commands |
-| `POSTGRES_PASSWORD` | Local Docker database password |
-| `APP_URL` | Exact site origin for CSRF checks/reset links, without trailing slash |
-| `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET` | Server-side provider order/payment access |
-| `RAZORPAY_WEBHOOK_SECRET` | Independent raw-body webhook signing secret |
-| `RESEND_API_KEY`, `EMAIL_FROM` | Optional password-reset email delivery; use a verified sender |
-| `CRON_SECRET` | Bearer secret for the reminder/cleanup endpoint |
-| `STORAGE_PROVIDER` | Set to `supabase` in production |
-| `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | Server-only object-storage access |
-| `MSG91_*` | Server-only OTP, sender and approved booking-template configuration |
+| Variable                                                           | Purpose                                                                       |
+| ------------------------------------------------------------------ | ----------------------------------------------------------------------------- |
+| `DATABASE_URL`                                                     | Application PostgreSQL connection; pooler supported                           |
+| `DIRECT_URL`                                                       | Direct PostgreSQL connection for migration commands                           |
+| `POSTGRES_PASSWORD`                                                | Local Docker database password                                                |
+| `APP_URL`                                                          | Exact site origin for CSRF checks/reset links, without trailing slash         |
+| `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`                           | Server-side provider order/payment access                                     |
+| `RAZORPAY_WEBHOOK_SECRET`                                          | Independent raw-body webhook signing secret                                   |
+| `RESEND_API_KEY`, `EMAIL_FROM`                                     | Server-only Resend API key and verified transactional sender                  |
+| `RESEND_WEBHOOK_SECRET`                                            | Server-only signing secret for `/api/webhooks/resend`                         |
+| `EMAIL_TOKEN_SECRET`                                               | Server-only random 32+ character HMAC secret for email OTPs                   |
+| `CRON_SECRET`                                                      | Bearer secret for the reminder/cleanup endpoint                               |
+| `STORAGE_PROVIDER`                                                 | Set to `supabase` in production                                               |
+| `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`                        | Server-only object-storage access                                             |
+| `MSG91_*`                                                          | Server-only OTP, sender and approved booking-template configuration           |
 | `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Optional public project metadata; Prisma does not use these for authorization |
-| `ADMIN_EMAIL`, `ADMIN_PHONE`, `ADMIN_PASSWORD` | One-time administrator creation only |
+| `ADMIN_EMAIL`, `ADMIN_PHONE`, `ADMIN_PASSWORD`                     | One-time administrator creation only                                          |
 
-Redis and JWT secrets are no longer required. Sessions and booking locks use PostgreSQL. The Razorpay key ID is returned to checkout as required by the provider; secret keys never reach the browser.
+Redis and JWT secrets are no longer required. Sessions and booking locks use PostgreSQL. Email OTPs use `EMAIL_TOKEN_SECRET`; rotate it only after outstanding ten-minute OTP challenges expire. The Razorpay key ID is returned to checkout as required by the provider; secret keys never reach the browser.
+
+## Transactional email
+
+Trainrr uses the official Resend SDK and server-rendered React email templates for account verification links and codes, passwordless login, password resets, password-change notices, welcome mail, email changes, booking notifications, and support messages. Configure the Resend webhook endpoint as `https://yourtrainrr.com/api/webhooks/resend` for sent, delivered, delayed, bounced, complained, failed, and suppressed events. Keep click/open tracking disabled for authentication mail. See [docs/email-authentication.md](docs/email-authentication.md) for DNS, webhook, testing, rotation, and troubleshooting details.
 
 ## Payments and reminders
 

@@ -1,4 +1,6 @@
 import { assert } from "./http";
+import { GenericEmail } from "./email/templates";
+import { sendTransactionalEmail } from "./email/send";
 
 // Never log request bodies/URLs here: OTPs and reset tokens are sensitive.
 export async function sendEmail(
@@ -7,51 +9,13 @@ export async function sendEmail(
   message: string,
   key: string,
 ) {
-  assert(
-    process.env.RESEND_API_KEY && process.env.EMAIL_FROM,
-    "Email service is temporarily unavailable. Please try again later.",
-    503,
-  );
-  const escape = (v: string) =>
-    v.replace(
-      /[&<>"']/g,
-      (c) =>
-        ({
-          "&": "&amp;",
-          "<": "&lt;",
-          ">": "&gt;",
-          '"': "&quot;",
-          "'": "&#39;",
-        })[c]!,
-    );
-  const response = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    signal: AbortSignal.timeout(10000),
-    headers: {
-      Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
-      "Content-Type": "application/json",
-      "Idempotency-Key": key,
-    },
-    body: JSON.stringify({
-      from: process.env.EMAIL_FROM,
-      to: [to],
-      subject,
-      text: message,
-      html: `<div style="font-family:Arial,sans-serif;max-width:580px;margin:auto;padding:28px;color:#15372c"><h1>Trainrr</h1><h2>${escape(subject)}</h2><p style="white-space:pre-line;line-height:1.7">${escape(message)}</p><hr><p>Your personal training, on your schedule.</p></div>`,
-    }),
+  return sendTransactionalEmail({
+    to,
+    subject,
+    template: "notification",
+    content: <GenericEmail title={subject} message={message} />,
+    idempotencyKey: key,
   });
-  assert(
-    response.ok,
-    "We could not send this email. Please try again shortly.",
-    503,
-  );
-  const result = await response.json();
-  assert(
-    typeof result.id === "string",
-    "Email provider returned an invalid response.",
-    503,
-  );
-  return result.id as string;
 }
 
 export function smsConfigured() {
