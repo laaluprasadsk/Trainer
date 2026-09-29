@@ -61,19 +61,20 @@ enum PaymentStatus {
 }
 
 model User {
-  emailVerifiedAt DateTime? @map("email_verified_at")
-  phoneVerifiedAt DateTime? @map("phone_verified_at")
-  id           String        @id @default(uuid())
-  email        String        @unique
-  phoneNumber  String        @unique @map("phone_number")
-  passwordHash String        @map("password_hash")
-  role         UserRole
-  status       AccountStatus @default(PENDING)
-  createdAt    DateTime      @default(now()) @map("created_at")
-  updatedAt    DateTime      @updatedAt @map("updated_at")
+  emailVerifiedAt DateTime?     @map("email_verified_at")
+  phoneVerifiedAt DateTime?     @map("phone_verified_at")
+  id              String        @id @default(uuid())
+  email           String        @unique
+  phoneNumber     String        @unique @map("phone_number")
+  passwordHash    String        @map("password_hash")
+  role            UserRole
+  status          AccountStatus @default(PENDING)
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
 
   sessions       Session[]
   tokens         AuthToken[]
+  emailSends     EmailSend[]
   notifications  Notification[]
   uploads        Upload[]
   clientProfile  ClientProfile?
@@ -115,7 +116,7 @@ model TrainerProfile {
   hourlyRate           Decimal               @map("hourly_rate") @db.Decimal(10, 2)
   currency             String                @default("INR")
   verificationStatus   VerificationStatus    @default(UNVERIFIED) @map("verification_status")
-  isPublished           Boolean               @default(false) @map("is_published")
+  isPublished          Boolean               @default(false) @map("is_published")
   homeLocationName     String                @map("home_location_name")
   serviceRadiusKm      Decimal               @default(10.0) @map("service_radius_km") @db.Decimal(5, 2)
   ratingAvg            Decimal               @default(0.00) @map("rating_avg") @db.Decimal(3, 2)
@@ -283,14 +284,52 @@ model Session {
 }
 
 model AuthToken {
-  id        String   @id
-  userId    String   @map("user_id")
+  id        String    @id
+  userId    String    @map("user_id")
   kind      String
-  expiresAt DateTime @map("expires_at")
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  payload   String?
+  attempts  Int       @default(0)
+  resendAt  DateTime? @map("resend_at")
+  expiresAt DateTime  @map("expires_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@index([userId])
+  @@index([userId, kind])
+  @@index([expiresAt])
   @@map("auth_tokens")
+}
+
+model EmailSend {
+  id              String       @id @default(uuid())
+  idempotencyKey  String       @unique @map("idempotency_key")
+  userId          String?      @map("user_id")
+  recipient       String
+  template        String
+  providerEmailId String?      @unique @map("provider_email_id")
+  status          String       @default("PENDING")
+  lastError       String?      @map("last_error")
+  createdAt       DateTime     @default(now()) @map("created_at")
+  updatedAt       DateTime     @updatedAt @map("updated_at")
+  user            User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+  events          EmailEvent[]
+
+  @@index([userId, createdAt])
+  @@index([status, createdAt])
+  @@map("email_sends")
+}
+
+model EmailEvent {
+  id                String     @id @default(uuid())
+  providerEventId   String     @unique @map("provider_event_id")
+  providerEmailId   String     @map("provider_email_id")
+  emailSendId       String?    @map("email_send_id")
+  type              String
+  providerCreatedAt DateTime   @map("provider_created_at")
+  createdAt         DateTime   @default(now()) @map("created_at")
+  emailSend         EmailSend? @relation(fields: [emailSendId], references: [id], onDelete: SetNull)
+
+  @@index([providerEmailId, providerCreatedAt])
+  @@map("email_events")
 }
 
 model RateLimit {
@@ -302,16 +341,16 @@ model RateLimit {
 }
 
 model Notification {
-  deliveries MessageDelivery[]
-  smsTemplate String? @map("sms_template")
-  smsVariables Json? @map("sms_variables")
-  id        String   @id @default(uuid())
-  userId    String   @map("user_id")
-  message   String
-  href      String?
-  read      Boolean  @default(false)
-  createdAt DateTime @default(now()) @map("created_at")
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deliveries   MessageDelivery[]
+  smsTemplate  String?           @map("sms_template")
+  smsVariables Json?             @map("sms_variables")
+  id           String            @id @default(uuid())
+  userId       String            @map("user_id")
+  message      String
+  href         String?
+  read         Boolean           @default(false)
+  createdAt    DateTime          @default(now()) @map("created_at")
+  user         User              @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, createdAt])
   @@map("notifications")
@@ -329,44 +368,46 @@ model AdminAction {
 }
 
 model Upload {
-  id        String   @id @default(uuid())
-  userId    String   @map("user_id")
-  mime      String
-  public    Boolean  @default(false)
-  data      Bytes?
-  storagePath String? @map("storage_path")
-  createdAt DateTime @default(now()) @map("created_at")
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id          String   @id @default(uuid())
+  userId      String   @map("user_id")
+  mime        String
+  public      Boolean  @default(false)
+  data        Bytes?
+  storagePath String?  @map("storage_path")
+  createdAt   DateTime @default(now()) @map("created_at")
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@map("uploads")
 }
 
 model MessageDelivery {
-  id String @id
-  notificationId String @map("notification_id")
-  channel String
-  status String @default("PENDING")
-  attempts Int @default(0)
-  nextAttemptAt DateTime @default(now()) @map("next_attempt_at")
-  leaseUntil DateTime? @map("lease_until")
-  leaseToken String? @map("lease_token")
-  providerId String? @map("provider_id")
-  lastError String? @map("last_error")
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
-  notification Notification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+  id             String       @id
+  notificationId String       @map("notification_id")
+  channel        String
+  status         String       @default("PENDING")
+  attempts       Int          @default(0)
+  nextAttemptAt  DateTime     @default(now()) @map("next_attempt_at")
+  leaseUntil     DateTime?    @map("lease_until")
+  leaseToken     String?      @map("lease_token")
+  providerId     String?      @map("provider_id")
+  lastError      String?      @map("last_error")
+  createdAt      DateTime     @default(now()) @map("created_at")
+  updatedAt      DateTime     @updatedAt @map("updated_at")
+  notification   Notification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+
   @@unique([notificationId, channel])
   @@index([status, nextAttemptAt])
   @@map("message_deliveries")
 }
 
 model PhoneChallenge {
-  userId String @id @map("user_id")
-  phone String
-  attempts Int @default(0)
+  userId    String   @id @map("user_id")
+  phone     String
+  attempts  Int      @default(0)
   expiresAt DateTime @map("expires_at")
-  resendAt DateTime @map("resend_at")
+  resendAt  DateTime @map("resend_at")
+
   @@map("phone_challenges")
 }
 
@@ -383,8 +424,9 @@ model SupportRequest {
 }
 
 model PlatformSettings {
-  id String @id @default("platform")
-  commissionBps Int @default(1500) @map("commission_bps")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  id            String   @id @default("platform")
+  commissionBps Int      @default(1500) @map("commission_bps")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
   @@map("platform_settings")
 }

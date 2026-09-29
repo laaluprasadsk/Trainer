@@ -1,8 +1,18 @@
-import { randomBytes } from "node:crypto";
 import { api, assert, body, text } from "@/lib/http";
 import { digest, rateLimit, requireUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { msg91, sendEmail, smsConfigured } from "@/lib/messaging";
+import { msg91, smsConfigured } from "@/lib/messaging";
+import {
+  accountName,
+  consumeOtp,
+  createLinkChallenge,
+  createOtpChallenge,
+} from "@/lib/email/challenges";
+import {
+  sendEmailOtp,
+  sendVerificationEmail,
+  sendWelcomeEmail,
+} from "@/lib/email/auth-emails";
 export const GET = api(async () => {
   const user = await requireUser();
   return {
@@ -18,32 +28,76 @@ export const POST = api(async (req) => {
   const action = text(b.action, "Action");
   await rateLimit(`verification:${user.id}`, 15);
   if (action === "SEND_EMAIL") {
+    if (user.emailVerifiedAt)
+      return { message: "Your email is already verified." };
     await rateLimit(`verification-email:${user.id}`, 3);
-    assert(process.env.APP_URL, "Email verification is not configured.", 503);
-    const token = randomBytes(32).toString("hex");
-    const id = digest(token);
-    await prisma.$transaction(async (tx) => {
-      await tx.authToken.deleteMany({
-        where: { userId: user.id, kind: "VERIFY_EMAIL" },
-      });
-      await tx.authToken.create({
-        data: {
-          id,
-          userId: user.id,
-          kind: "VERIFY_EMAIL",
-          expiresAt: new Date(Date.now() + 1800000),
-        },
-      });
+    const recent = await prisma.authToken.findFirst({
+      where: {
+        userId: user.id,
+        kind: "VERIFY_EMAIL",
+        resendAt: { gt: new Date() },
+      },
     });
-    await sendEmail(
-      user.email,
-      "Verify your Trainrr email",
-      `Confirm your email within 30 minutes by opening this secure link:\n${process.env.APP_URL}/verify-account?token=${token}\n\nIf you did not create this account, you can ignore this email.`,
-      `verify-${id}`,
+    if (recent)
+      return {
+        message:
+          "A verification email was sent recently. Check your inbox or wait 60 seconds to resend.",
+      };
+    const { token, id } = await createLinkChallenge(user.id, "VERIFY_EMAIL");
+    await sendVerificationEmail(
+      { id: user.id, email: user.email, name: accountName(user) },
+      token,
+      id,
     );
     return {
       message: "Verification email sent. The link expires in 30 minutes.",
     };
+  }
+  if (action === "SEND_EMAIL_OTP") {
+    if (user.emailVerifiedAt)
+      return { message: "Your email is already verified." };
+    await rateLimit(`verification-email-otp:${user.id}`, 3);
+    const recent = await prisma.authToken.findFirst({
+      where: {
+        userId: user.id,
+        kind: "VERIFY_EMAIL_OTP",
+        resendAt: { gt: new Date() },
+      },
+    });
+    if (recent)
+      return {
+        message:
+          "A code was sent recently. Check your inbox or wait 60 seconds to resend.",
+      };
+    const { code, id } = await createOtpChallenge(user.id, "VERIFY_EMAIL_OTP");
+    await sendEmailOtp(
+      { id: user.id, email: user.email, name: accountName(user) },
+      code,
+      `verify-${id}`,
+      "verification",
+    );
+    return { message: "Verification code sent. It expires in 10 minutes." };
+  }
+  if (action === "VERIFY_EMAIL_OTP") {
+    await rateLimit(`verification-email-otp-attempt:${user.id}`, 10);
+    await consumeOtp(
+      user.id,
+      "VERIFY_EMAIL_OTP",
+      text(b.otp, "Verification code", 6),
+    );
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { emailVerifiedAt: new Date() },
+    });
+    try {
+      await sendWelcomeEmail({
+        id: user.id,
+        email: user.email,
+        name: accountName(user),
+        role: user.role,
+      });
+    } catch {}
+    return { message: "Email verified." };
   }
   if (action === "VERIFY_EMAIL") {
     assert(
@@ -69,6 +123,14 @@ export const POST = api(async (req) => {
         data: { emailVerifiedAt: new Date() },
       });
     });
+    try {
+      await sendWelcomeEmail({
+        id: user.id,
+        email: user.email,
+        name: accountName(user),
+        role: user.role,
+      });
+    } catch {}
     return { message: "Email verified." };
   }
   smsConfigured();

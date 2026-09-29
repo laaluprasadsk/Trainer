@@ -14,6 +14,8 @@ export default function VerificationPage() {
     phoneVerified: boolean;
   }>("/api/account/verification");
   const [otp, setOtp] = useState("");
+  const [emailOtp, setEmailOtp] = useState("");
+  const [emailCooldown, setEmailCooldown] = useState(0);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [failure, setFailure] = useState("");
@@ -29,9 +31,11 @@ export default function VerificationPage() {
       const r = await request<{ message: string }>(
         "/api/account/verification",
         "POST",
-        { action, otp, token },
+        { action, otp: action.includes("EMAIL_OTP") ? emailOtp : otp, token },
       );
       setMessage(r.message);
+      if (action === "SEND_EMAIL" || action === "SEND_EMAIL_OTP")
+        setEmailCooldown(60);
       if (action === "VERIFY_EMAIL")
         window.history.replaceState({}, "", "/verify-account");
       await reload();
@@ -50,6 +54,14 @@ export default function VerificationPage() {
     // already-used error, so this effect intentionally runs once on mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  useEffect(() => {
+    if (!emailCooldown) return;
+    const timer = window.setInterval(
+      () => setEmailCooldown((value) => Math.max(0, value - 1)),
+      1000,
+    );
+    return () => window.clearInterval(timer);
+  }, [emailCooldown]);
   return (
     <Shell
       title="Verify your account"
@@ -63,15 +75,49 @@ export default function VerificationPage() {
             <h2 className="font-semibold">Email: {data.email}</h2>
             <p>{data.emailVerified ? "Verified" : "Not verified"}</p>
             {!data.emailVerified && (
-              <div className="flex flex-wrap gap-3">
-                <button
-                  className="rounded-lg border p-3"
-                  disabled={busy}
-                  onClick={() => act("SEND_EMAIL")}
-                >
-                  Send verification email
-                </button>
-              </div>
+              <>
+                <div className="flex flex-wrap gap-3">
+                  <button
+                    className="rounded-lg border p-3"
+                    disabled={busy || emailCooldown > 0}
+                    onClick={() => act("SEND_EMAIL")}
+                  >
+                    {emailCooldown
+                      ? `Resend link in ${emailCooldown}s`
+                      : "Send verification link"}
+                  </button>
+                  <button
+                    className="rounded-lg border p-3"
+                    disabled={busy || emailCooldown > 0}
+                    onClick={() => act("SEND_EMAIL_OTP")}
+                  >
+                    Send six-digit email code
+                  </button>
+                </div>
+                <div className="mt-4 grid gap-3">
+                  <label className="block">
+                    Email verification code
+                    <input
+                      className="mt-2 block w-full rounded-lg border p-3"
+                      inputMode="numeric"
+                      autoComplete="one-time-code"
+                      maxLength={6}
+                      value={emailOtp}
+                      pattern="[0-9]{6}"
+                      onChange={(event) =>
+                        setEmailOtp(event.target.value.replace(/\D/g, ""))
+                      }
+                    />
+                  </label>
+                  <button
+                    className="rounded-lg bg-emerald-700 p-3 text-white"
+                    disabled={busy || emailOtp.length !== 6}
+                    onClick={() => act("VERIFY_EMAIL_OTP")}
+                  >
+                    Verify email code
+                  </button>
+                </div>
+              </>
             )}
           </section>
           <section className="space-y-3">

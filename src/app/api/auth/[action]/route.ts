@@ -15,7 +15,12 @@ import {
   requireUser,
   verifyPassword,
 } from "@/lib/auth";
-import { sendEmail } from "@/lib/messaging";
+import { accountName, createLinkChallenge } from "@/lib/email/challenges";
+import {
+  sendPasswordChangedEmail,
+  sendPasswordResetEmail,
+  sendVerificationEmail,
+} from "@/lib/email/auth-emails";
 export const GET = api(async () => {
   const user = await currentUser();
   return { user: user ? publicUser(user) : null };
@@ -37,9 +42,12 @@ export const POST = api(async (req) => {
     const password = text(b.password, "Password", 128);
     assert(password === b.confirmPassword, "Passwords do not match.");
     const hash = hashPassword(password);
-    await prisma.$transaction(async (tx) => {
+    const changed = await prisma.$transaction(async (tx) => {
       const row = await tx.authToken.findUnique({
         where: { id: digest(token) },
+        include: {
+          user: { include: { clientProfile: true, trainerProfile: true } },
+        },
       });
       assert(
         row && row.kind === "RESET" && row.expiresAt > new Date(),
@@ -52,8 +60,21 @@ export const POST = api(async (req) => {
         data: { passwordHash: hash },
       });
       await tx.session.deleteMany({ where: { userId: row.userId } });
+      return { row, user: row.user };
     });
-    return { message: "Password reset. Sign in with your new password." };
+    try {
+      await sendPasswordChangedEmail(
+        {
+          id: changed.user.id,
+          email: changed.user.email,
+          name: accountName(changed.user),
+        },
+        changed.row.id,
+      );
+    } catch {}
+    return {
+      message: "Password updated successfully. Sign in with your new password.",
+    };
   }
   if (action === "password") {
     const u = await requireUser();
@@ -70,40 +91,52 @@ export const POST = api(async (req) => {
     });
     await prisma.session.deleteMany({ where: { userId: u.id } });
     await createSession(u.id);
+    try {
+      await sendPasswordChangedEmail(
+        { id: u.id, email: u.email, name: accountName(u) },
+        randomBytes(16).toString("hex"),
+      );
+    } catch {}
     return { message: "Password changed. Other sessions were signed out." };
   }
   const email = normalizeEmail(text(b.email, "Email", 254));
   assert(/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email), "Enter a valid email.");
   await rateLimit(`auth:${email}`);
   if (action === "forgot") {
-    const user = await prisma.user.findUnique({ where: { email } });
+    const user = await prisma.user.findUnique({
+      where: { email },
+      include: { clientProfile: true, trainerProfile: true },
+    });
     if (
       user &&
       process.env.RESEND_API_KEY &&
       process.env.EMAIL_FROM &&
       process.env.APP_URL
     ) {
-      const token = randomBytes(32).toString("hex");
-      const tokenId = digest(token);
-      await prisma.$transaction(async (tx) => {
-        await tx.authToken.deleteMany({
-          where: { userId: user.id, kind: "RESET" },
-        });
-        await tx.authToken.create({
-          data: {
-            id: tokenId,
+      try {
+        const existing = await prisma.authToken.findFirst({
+          where: {
             userId: user.id,
             kind: "RESET",
-            expiresAt: new Date(Date.now() + 1800000),
+            resendAt: { gt: new Date() },
           },
         });
-      });
-      await sendEmail(
-        email,
-        "Reset your Trainrr password",
-        `Use this secure link within 30 minutes to choose a new password:\n${process.env.APP_URL}/reset-password?token=${token}\n\nIf you did not request this, you can ignore this email.`,
-        `reset-${tokenId}`,
-      );
+        if (!existing) {
+          const { token, id } = await createLinkChallenge(user.id, "RESET");
+          await sendPasswordResetEmail(
+            { id: user.id, email, name: accountName(user) },
+            token,
+            id,
+          );
+        }
+      } catch (error) {
+        console.error(
+          JSON.stringify({
+            event: "password_reset_delivery_failed",
+            error: error instanceof Error ? error.name : "UnknownError",
+          }),
+        );
+      }
     }
     return { message: "If this account exists, a reset link has been sent." };
   }
@@ -189,6 +222,21 @@ export const POST = api(async (req) => {
       });
     }
     await createSession(user.id);
+    try {
+      const { token, id } = await createLinkChallenge(user.id, "VERIFY_EMAIL");
+      await sendVerificationEmail(
+        { id: user.id, email: user.email, name: firstName },
+        token,
+        id,
+      );
+    } catch (error) {
+      console.error(
+        JSON.stringify({
+          event: "registration_verification_delivery_failed",
+          error: error instanceof Error ? error.name : "UnknownError",
+        }),
+      );
+    }
   } else if (action === "login") {
     const user = await prisma.user.findUnique({ where: { email } });
     assert(

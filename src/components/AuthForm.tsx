@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Navbar } from "./layout/Navbar";
 import { request, Notice } from "./ui/marketplace";
 import { AuthUser, useAuth } from "@/lib/auth-context";
+import { safeInternalRedirect } from "@/lib/safe-redirect";
 export function AuthForm({
   mode,
 }: {
@@ -48,10 +49,7 @@ export function AuthForm({
         const requested = new URLSearchParams(window.location.search).get(
           "next",
         );
-        const safeRequested =
-          requested?.startsWith("/") && !requested.startsWith("//")
-            ? requested
-            : "";
+        const safeRequested = safeInternalRedirect(requested) || "";
         router.push(
           mode === "register"
             ? result.user.role === "CLIENT"
@@ -234,6 +232,14 @@ export function AuthForm({
             </Link>
             <Link href="/forgot-password">Forgot password?</Link>
           </div>
+          {mode === "login" && (
+            <Link
+              href="/login/email-code"
+              className="nav-pill block text-center"
+            >
+              Sign in with an email code
+            </Link>
+          )}
         </form>
       </main>
     </>
